@@ -1,0 +1,5 @@
+/**
+ * smartminds service
+ */
+
+export default () => ({});

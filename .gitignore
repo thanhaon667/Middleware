@@ -1,7 +1,6 @@
 ############################
 # OS X
 ############################
-
 .DS_Store
 .AppleDouble
 .LSOverride
@@ -10,18 +9,14 @@ Icon
 .Trashes
 ._*
 
-
 ############################
 # Linux
 ############################
-
 *~
-
 
 ############################
 # Windows
 ############################
-
 Thumbs.db
 ehthumbs.db
 Desktop.ini
@@ -31,11 +26,9 @@ $RECYCLE.BIN/
 *.msm
 *.msp
 
-
 ############################
-# Packages
+# Archives / Binaries
 ############################
-
 *.7z
 *.csv
 *.dat
@@ -60,47 +53,45 @@ $RECYCLE.BIN/
 *.out
 *.pid
 
-
 ############################
-# Logs and databases
+# Logs & Databases
 ############################
-
 .tmp
 *.log
 *.sql
 *.sqlite
 *.sqlite3
-
+logs/
 
 ############################
-# Misc.
+# IDEs & Editors
 ############################
-
-*#
-ssl
 .idea
-nbproject
-public/uploads/*
-!public/uploads/.gitkeep
+.vscode
+*.swp
+*.swo
+*~
 .tsbuildinfo
 .eslintcache
 
 ############################
 # Node.js
 ############################
-
+node_modules/
 lib-cov
 lcov.info
 pids
-logs
 results
-node_modules
-.node_history
+.npm
+.node_repl_history
+.pnpm-debug.log
+yarn-error.log
+.pnpm-store
+.yarn-integrity
 
 ############################
-# Package managers
+# Yarn (if using Yarn)
 ############################
-
 .yarn/*
 !.yarn/cache
 !.yarn/unplugged
@@ -112,20 +103,33 @@ node_modules
 yarn-error.log
 
 ############################
-# Tests
+# Strapi specific
 ############################
-
-coverage
-
-############################
-# Strapi
-############################
-
 .env
+.env.*
+!.env.example
 license.txt
-exports
+exports/
 .strapi
-dist
-build
+dist/
+build/
 .strapi-updater.json
 .strapi-cloud.json
+.cache
+.tmp
+public/uploads/*
+!public/uploads/.gitkeep
+
+############################
+# Tests
+############################
+coverage
+.nyc_output
+
+############################
+# Misc
+############################
+ssl/
+*.pem
+*.key
+*.crt

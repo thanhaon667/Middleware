@@ -1,0 +1,14 @@
+{
+  "kind": "collectionType",
+  "collectionName": "max_thanhs",
+  "info": {
+    "singularName": "max-thanh",
+    "pluralName": "max-thanhs",
+    "displayName": "Max Thanh"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {}
+}
