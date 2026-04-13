@@ -1,0 +1,42 @@
+{
+    "kind": "collectionType",
+    "collectionName": "integration_credentials",
+    "info": {
+        "singularName": "integration-credential",
+        "pluralName": "integration-credentials",
+        "displayName": "Integration Credential"
+    },
+    "options": {
+        "draftAndPublish": true
+    },
+    "pluginOptions": {},
+    "attributes": {
+        "clientName": {
+            "type": "string"
+        },
+        "misaClientId": {
+            "type": "string"
+        },
+        "misaClientSecret": {
+            "type": "string"
+        },
+        "misaApiUrl": {
+            "type": "string"
+        },
+        "zeekAppId": {
+            "type": "string"
+        },
+        "zeekAppSecret": {
+            "type": "string"
+        },
+        "zeekApiUrl": {
+            "type": "string"
+        },
+        "isActive": {
+            "type": "string"
+        },
+        "misaAppID": {
+            "type": "string"
+        }
+    }
+}

@@ -1,0 +1,52 @@
+{
+    "kind": "collectionType",
+    "collectionName": "integration_logs",
+    "info": {
+        "singularName": "integration-log",
+        "pluralName": "integration-logs",
+        "displayName": "IntegrationLog"
+    },
+    "options": {
+        "draftAndPublish": true
+    },
+    "pluginOptions": {},
+    "attributes": {
+        "client": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::client.client",
+            "inversedBy": "Client"
+        },
+        "direction": {
+            "type": "enumeration",
+            "enum": [
+                "incoming",
+                "outgoing"
+            ]
+        },
+        "Endpoint": {
+            "type": "string"
+        },
+        "requestBody": {
+            "type": "json"
+        },
+        "responseBody": {
+            "type": "json"
+        },
+        "logStatus": {
+            "type": "enumeration",
+            "enum": [
+                "success",
+                "failed,",
+                "pending"
+            ]
+        },
+        "retryCount": {
+            "type": "integer",
+            "default": 0
+        },
+        "errorMessage": {
+            "type": "text"
+        }
+    }
+}

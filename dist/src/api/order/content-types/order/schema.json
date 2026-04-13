@@ -1,0 +1,52 @@
+{
+    "kind": "collectionType",
+    "collectionName": "orders",
+    "info": {
+        "singularName": "order",
+        "pluralName": "orders",
+        "displayName": "Order"
+    },
+    "options": {
+        "draftAndPublish": true
+    },
+    "pluginOptions": {},
+    "attributes": {
+        "orderId": {
+            "type": "string",
+            "required": true,
+            "unique": true
+        },
+        "payload": {
+            "type": "json"
+        },
+        "orderStatus": {
+            "type": "enumeration",
+            "default": "new",
+            "enum": [
+                "new",
+                "pending",
+                "sent",
+                "completed",
+                "failed"
+            ]
+        },
+        "SentAt": {
+            "type": "datetime"
+        },
+        "Client": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::client.client",
+            "inversedBy": "orders"
+        },
+        "platform_connection": {
+            "type": "relation",
+            "relation": "manyToOne",
+            "target": "api::platform-connection.platform-connection",
+            "inversedBy": "orders"
+        },
+        "processingLog": {
+            "type": "json"
+        }
+    }
+}
