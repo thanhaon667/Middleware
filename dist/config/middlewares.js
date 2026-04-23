@@ -3,7 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const config = [
     'strapi::logger',
     'strapi::errors',
-    'strapi::security',
+    {
+        name: 'strapi::security',
+        config: {
+            contentSecurityPolicy: false, // Tắt CSP mặc định của Strapi
+        },
+    },
     'strapi::cors',
     'strapi::poweredBy',
     'strapi::query',
@@ -11,5 +16,6 @@ const config = [
     'strapi::session',
     'strapi::favicon',
     'strapi::public',
+    'global::custom-csp', // Thêm middleware của bạn
 ];
 exports.default = config;
