@@ -9,6 +9,7 @@ let MISA_API_BASE_URL: string;  // ví dụ: https://crmconnect.misa.vn
 let ZEEK_APP_ID: string;
 let ZEEK_APP_SECRET: string;
 let ZEEK_API_URL: string;
+let CLIENT_MERCHANT_ID: string;
 
 /**
  * Tải thông tin xác thực từ collection integration-credential
@@ -32,6 +33,7 @@ async function loadCredentials() {
   ZEEK_APP_ID = cred.zeekAppId;
   ZEEK_APP_SECRET = cred.zeekAppSecret;
   ZEEK_API_URL = cred.zeekApiUrl;
+  CLIENT_MERCHANT_ID = cred.clientMerchantId;
   console.log('✅ Loaded credentials from database');
 }
 
@@ -128,7 +130,7 @@ async function getMisaToken(): Promise<string> {
 async function fetchMisaOrders(token: string): Promise<any[]> {
   console.log('📦 [2/6] Fetching orders from MISA...');
   const ordersUrl = `${MISA_API_BASE_URL}/api/v2/SaleOrders`;
-  const params = { page: 0, pageSize: 10, orderBy: 'modified_date', isDescending: true };
+  const params = { page: 0, pageSize: 20, orderBy: 'modified_date', isDescending: true };
   try {
     const response = await axios.get(ordersUrl, {
       headers: { Authorization: `Bearer ${token}`, Clientid: MISA_CLIENT_ID },
@@ -217,10 +219,15 @@ async function sendToZeek(order: any) {
   const merchantOrderId = clientOrderId.slice(-6);
   const orderTime = Math.floor(new Date(misa.created_date).getTime() / 1000);
   const timestamp = Math.floor(Date.now() / 1000);
+ 
+// Xử lý số điện thoại: lấy từ order, bỏ số 0 đầu nếu có
+  let rawPhone = misa.phone || '';
+  let cleanPhone = rawPhone.replace(/^0+/, ''); // xóa tất cả số 0 ở đầu
+  if (!cleanPhone) cleanPhone = '868036856'; // fallback
 
   const receive = {
     user_name: misa.shipping_contact_name || misa.account_name || 'Khách hàng',
-    user_phone: '868036856',
+    user_phone: cleanPhone,
     user_phone_country_code: '84',
     user_location: '',
     user_address: misa.shipping_address || misa.billing_address || 'Địa chỉ mặc định'
@@ -238,7 +245,7 @@ async function sendToZeek(order: any) {
         lang: 'vi',
         region: 'SGN'
       },
-      client_merchant_id: 'SMID01',
+      client_merchant_id: CLIENT_MERCHANT_ID,
       client_order_id: clientOrderId,
       merchant_order_id: merchantOrderId,
       order_time: orderTime,

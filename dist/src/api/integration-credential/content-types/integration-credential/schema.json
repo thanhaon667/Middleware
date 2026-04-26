@@ -37,6 +37,9 @@
         },
         "misaAppID": {
             "type": "string"
+        },
+        "clientMerchantId": {
+            "type": "string"
         }
     }
 }
