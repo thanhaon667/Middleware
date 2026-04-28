@@ -33,7 +33,8 @@
             "type": "string"
         },
         "isActive": {
-            "type": "string"
+            "type": "boolean",
+            "default": false
         },
         "misaAppID": {
             "type": "string"

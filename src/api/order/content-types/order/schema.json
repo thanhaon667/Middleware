@@ -14,7 +14,7 @@
     "orderId": {
       "type": "string",
       "required": true,
-      "unique": true
+      "unique": false
     },
     "payload": {
       "type": "json"
@@ -47,6 +47,9 @@
     },
     "processingLog": {
       "type": "json"
+    },
+    "clientName": {
+      "type": "string"
     }
   }
 }
