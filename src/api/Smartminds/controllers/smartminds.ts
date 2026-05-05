@@ -101,6 +101,39 @@ async function getMisaToken(): Promise<string> {
   }
 }
 
+/**
+ * Map trạng thái từ mã Zeek (order_status) sang một trong các giá trị:
+ * 'COMPLETED', 'FAILED', 'IN_DELIVERY', 'PICKING_UP'
+ */
+function mapZeekStatusToEnum(code: number, desc: string): string {
+  console.log(`[MAP STATUS] Mapping code ${code} with desc "${desc}"`);
+  switch (code) {
+    case 9021: // Order is completed
+      return 'COMPLETED';
+    case 9025: // Order is cancelled - before partner picked up food
+    case 9026: // Order is cancelled - after partner picked up food
+      return 'FAILED';
+    case 9015: // Delivery in progress
+      return 'IN_DELIVERY';
+    case 9005: // Partner accepted order
+      return 'PICKING_UP';
+    case 9010: // Partner arrived merchant nearby
+    case 9011: // Partner arrived merchant
+    case 9017: // Partner arrived destination nearby
+    case 8012: // Partner departed from merchant
+      return 'IN_DELIVERY';
+    default:
+      // Fallback dùng mô tả tiếng Việt nếu có
+      const lowerDesc = desc.toLowerCase();
+      if (lowerDesc.includes('đã giao hàng') || lowerDesc.includes('giao thành công')) return 'COMPLETED';
+      if (lowerDesc.includes('thất bại') || lowerDesc.includes('không giao được') || lowerDesc.includes('hủy')) return 'FAILED';
+      if (lowerDesc.includes('đang giao')) return 'IN_DELIVERY';
+      if (lowerDesc.includes('đang lấy hàng') || lowerDesc.includes('lấy hàng')) return 'PICKING_UP';
+      console.warn(`[MAP STATUS] Không xác định được status cho code=${code}, desc="${desc}", mặc định PENDING`);
+      return 'PENDING';
+  }
+}
+
 export default {
   async receive(ctx) {
     console.log('\n========== WEBHOOK RECEIVED ==========');
@@ -108,31 +141,52 @@ export default {
       // 1. Load credentials
       await loadCredentials();
 
-      // 2. Lấy payload từ Zeek
-      const payload = ctx.request.body;
-      console.log('[WEBHOOK] Payload nhận được:', JSON.stringify(payload, null, 2));
+      // 2. Lấy payload từ Zeek (cấu trúc lồng trong data)
+      const rawPayload = ctx.request.body;
+      console.log('[WEBHOOK] Raw payload:', JSON.stringify(rawPayload, null, 2));
 
-      const {
-        merchantOrderID,
-        status,
-        deliveryID,
-        trackURL,
-        driver,
-        recipient
-      } = payload;
+      const zeekData = rawPayload.data;
+      if (!zeekData) {
+        console.error('[WEBHOOK] ❌ Missing data field in webhook');
+        ctx.status = 400;
+        ctx.body = { error: 'Invalid webhook structure: missing data' };
+        return;
+      }
 
+      // 3. merchantOrderID = client_order_id (ưu tiên) hoặc order_id
+      const merchantOrderID = zeekData.client_order_id || zeekData.order_id;
       if (!merchantOrderID) {
-        console.error('[WEBHOOK] ❌ Thiếu merchantOrderID');
+        console.error('[WEBHOOK] ❌ Thiếu client_order_id/order_id');
         ctx.status = 400;
         ctx.body = { error: 'Missing merchantOrderID' };
         return;
       }
-      console.log(`[WEBHOOK] merchantOrderID: ${merchantOrderID}, status: ${status}`);
+      console.log(`[WEBHOOK] merchantOrderID: ${merchantOrderID}`);
 
-      // 3. Ghi log nhận webhook
-      await addOrderLog(merchantOrderID, 'WEBHOOK_RECEIVED', `Received status: ${status}`);
+      // 4. Lấy order_status và status_desc từ Zeek
+      const orderStatusCode = zeekData.order_status;
+      const statusDesc = zeekData.status_desc || '';
+      console.log(`[WEBHOOK] order_status = ${orderStatusCode}, status_desc = "${statusDesc}"`);
 
-      // 4. Tìm order trong database
+      // 5. Chuyển đổi status enum
+      const statusEnum = mapZeekStatusToEnum(orderStatusCode, statusDesc);
+      console.log(`[WEBHOOK] Mapped status enum: ${statusEnum}`);
+
+      // 6. Các trường khác: deliveryID, driver, recipient, trackURL
+      const deliveryID = zeekData.order_id || (zeekData.tasks?.[0]?.id) || null;
+      const trackURL = null; // webhook không cung cấp
+      const driver = zeekData.partner ? {
+        name: zeekData.partner.partner_name,
+        phone: zeekData.partner.partner_phone
+      } : null;
+      const recipient = null; // không có trong payload hiện tại
+
+      console.log(`[WEBHOOK] deliveryID = ${deliveryID}, driver = ${JSON.stringify(driver)}`);
+
+      // 7. Ghi log nhận webhook
+      await addOrderLog(merchantOrderID, 'WEBHOOK_RECEIVED', `Received order_status=${orderStatusCode}, desc=${statusDesc}, mapped=${statusEnum}`);
+
+      // 8. Tìm order trong database
       console.log(`[WEBHOOK] Tìm order với orderId = ${merchantOrderID}...`);
       const order = await strapi.db.query('api::order.order').findOne({
         where: { orderId: merchantOrderID }
@@ -147,45 +201,45 @@ export default {
       }
       console.log(`[WEBHOOK] ✅ Đã tìm thấy order, id: ${order.id}, orderStatus hiện tại: ${order.orderStatus}`);
 
-// Mapping status từ Zeek sang delivery_status MISA
-const statusMapping: Record<string, string> = {
-  'COMPLETED': 'Đã giao hàng',
-  'FAILED': 'Chưa giao hàng',
-  'IN_DELIVERY': 'Đang giao hàng',
-  'PICKING_UP': 'Đang giao hàng',
-};
-const deliveryStatus = statusMapping[status] || 'Chưa giao hàng'; // fallback
-      console.log(`[WEBHOOK] delivery_status sẽ cập nhật: ${deliveryStatus}`);
+      // 9. Mapping status enum sang delivery_status MISA (chỉ 3 giá trị)
+      const statusMapping: Record<string, string> = {
+        'COMPLETED': 'Đã giao hàng',
+        'FAILED': 'Chưa giao hàng',
+        'IN_DELIVERY': 'Đang giao hàng',
+        'PICKING_UP': 'Đang giao hàng',
+      };
+      const deliveryStatus = statusMapping[statusEnum] || 'Chưa giao hàng';
+      console.log(`[WEBHOOK] delivery_status sẽ cập nhật: ${deliveryStatus} (từ enum ${statusEnum})`);
 
-const { list_product_category, list_product, organization_unit_name, ...restPayload } = order.payload;
+      // 10. Xây dựng updatedPayload: giữ nguyên thông tin cũ, chỉ cập nhật delivery_status và thêm zeek fields
+      const { list_product_category, list_product, organization_unit_name, ...restPayload } = order.payload;
 
-const updatedPayload = {
-  ...restPayload,
-  account_name: order.payload.account_code || order.payload.account_name,
-  contact_name: order.payload.contact_code || order.payload.contact_name,
-  billing_account: order.payload.account_code || order.payload.billing_account,
-  billing_contact: order.payload.contact_code || order.payload.billing_contact,
-  delivery_status: deliveryStatus,
-  zeek_delivery_id: deliveryID,
-  zeek_track_url: trackURL,
-  zeek_driver_name: driver?.name,
-  zeek_driver_phone: driver?.phone,
-  zeek_recipient_name: recipient?.name,
-  zeek_recipient_address: recipient?.address
-};
+      const updatedPayload = {
+        ...restPayload,
+        account_name: order.payload.account_code || order.payload.account_name,
+        contact_name: order.payload.contact_code || order.payload.contact_name,
+        billing_account: order.payload.account_code || order.payload.billing_account,
+        billing_contact: order.payload.contact_code || order.payload.billing_contact,
+        delivery_status: deliveryStatus,
+        zeek_delivery_id: deliveryID,
+        zeek_track_url: trackURL,
+        zeek_driver_name: driver?.name,
+        zeek_driver_phone: driver?.phone,
+        zeek_recipient_name: recipient?.name,
+        zeek_recipient_address: recipient?.address
+      };
 
-// Loại bỏ stock_name khỏi mỗi sản phẩm trong mảng sale_order_product_mappings
-if (updatedPayload.sale_order_product_mappings) {
-  updatedPayload.sale_order_product_mappings = updatedPayload.sale_order_product_mappings.map(item => {
-    const { stock_name, ...rest } = item;
-    return rest;
-  });
-}
-
+      // Loại bỏ stock_name khỏi mỗi sản phẩm trong mảng sale_order_product_mappings
+      if (updatedPayload.sale_order_product_mappings) {
+        updatedPayload.sale_order_product_mappings = updatedPayload.sale_order_product_mappings.map(item => {
+          const { stock_name, ...rest } = item;
+          return rest;
+        });
+      }
 
       console.log('[WEBHOOK] Đã tạo updatedPayload (giữ nguyên mọi trường, chỉ cập nhật delivery_status và thêm zeek fields)');
 
-      // 7. Lấy token MISA
+      // 11. Lấy token MISA
       let token;
       try {
         token = await getMisaToken();
@@ -197,7 +251,7 @@ if (updatedPayload.sale_order_product_mappings) {
         return;
       }
 
-      // 8. Gửi PUT lên MISA (dùng MISA_APP_ID động)
+      // 12. Gửi PUT lên MISA (dùng MISA_APP_ID động)
       const putUrl = `${MISA_API_BASE_URL}/api/v2/SaleOrders`;
       let response;
       try {
@@ -235,7 +289,7 @@ if (updatedPayload.sale_order_product_mappings) {
         return;
       }
 
-      // 9. Kiểm tra phản hồi MISA
+      // 13. Kiểm tra phản hồi MISA
       let success = false;
       let errorMsg = '';
       if (response.data && typeof response.data === 'object') {
@@ -266,44 +320,44 @@ if (updatedPayload.sale_order_product_mappings) {
         return;
       }
 
-      // 10. Cập nhật local database
+      // 14. Cập nhật local database
       console.log('[WEBHOOK] Cập nhật local database...');
-  // Xác định orderStatus dựa trên status Zeek
-let newOrderStatus = order.orderStatus;
-if (status === 'COMPLETED') newOrderStatus = 'completed';
-else if (status === 'FAILED') newOrderStatus = 'failed';
-else if (status === 'IN_DELIVERY' || status === 'PICKING_UP') newOrderStatus = 'processing';
+      // Xác định orderStatus dựa trên statusEnum
+      let newOrderStatus = order.orderStatus;
+      if (statusEnum === 'COMPLETED') newOrderStatus = 'completed';
+      else if (statusEnum === 'FAILED') newOrderStatus = 'failed';
+      else if (statusEnum === 'IN_DELIVERY' || statusEnum === 'PICKING_UP') newOrderStatus = 'processing';
 
-await strapi.db.query('api::order.order').update({
-  where: { id: order.id },
-  data: {
-    payload: updatedPayload,
-    orderStatus: newOrderStatus,
-    zeekStatus: status,
-    deliveredAt: status === 'COMPLETED' ? new Date() : null,
-    processingLog: [
-      ...(order.processingLog || []),
-      {
-        timestamp: new Date().toISOString(),
-        step: 'WEBHOOK',
-        message: `Order updated to delivery_status = ${deliveryStatus} (Zeek status: ${status})`,
-        isError: false
-      }
-    ]
-  }
-});
+      await strapi.db.query('api::order.order').update({
+        where: { id: order.id },
+        data: {
+          payload: updatedPayload,
+          orderStatus: newOrderStatus,
+          zeekStatus: statusEnum,      // lưu enum, hoặc có thể lưu mã gốc nếu cần
+          deliveredAt: statusEnum === 'COMPLETED' ? new Date() : null,
+          processingLog: [
+            ...(order.processingLog || []),
+            {
+              timestamp: new Date().toISOString(),
+              step: 'WEBHOOK',
+              message: `Order updated to delivery_status = ${deliveryStatus} (Zeek status: ${statusEnum})`,
+              isError: false
+            }
+          ]
+        }
+      });
       console.log('[WEBHOOK] ✅ Đã cập nhật local database');
 
-      // 11. Ghi log thành công
+      // 15. Ghi log thành công
       await addOrderLog(merchantOrderID, 'WEBHOOK_SUCCESS', `Successfully updated MISA: ${deliveryStatus}`);
 
-      // 12. Ghi log IntegrationLog
+      // 16. Ghi log IntegrationLog
       console.log('[WEBHOOK] Ghi log vào integration-log...');
       await strapi.db.query('api::integration-log.integration-log').create({
         data: {
           direction: 'incoming',
           endpoint: '/smartminds/webhook',
-          requestBody: payload,
+          requestBody: rawPayload,
           responseBody: { success: true, misaResponse: response.data },
           logStatus: 'success'
         }
