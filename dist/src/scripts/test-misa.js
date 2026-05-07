@@ -7,7 +7,7 @@ exports.testMisa = void 0;
 const axios_1 = __importDefault(require("axios"));
 let MISA_CLIENT_ID;
 let MISA_CLIENT_SECRET;
-let MISA_API_BASE_URL; // ví dụ: https://crmconnect.misa.vn
+let MISA_API_BASE_URL;
 let ZEEK_APP_ID;
 let ZEEK_APP_SECRET;
 let ZEEK_API_URL;
@@ -17,7 +17,6 @@ let CACHED_MISA_TOKEN = null;
 let CACHED_MISA_TOKEN_CLIENT = null;
 /**
  * `isActive` là cờ bật/tắt client trong CMS.
- * Vẫn giữ tương thích với dữ liệu cũ nếu DB còn record dạng string.
  */
 function isCredentialActive(value) {
     if (value === true)
@@ -55,7 +54,6 @@ function loadCredential(cred) {
     MISA_CLIENT_ID = cred.misaClientId;
     MISA_CLIENT_SECRET = cred.misaClientSecret;
     CURRENT_CLIENT_NAME = ((_a = cred.clientName) === null || _a === void 0 ? void 0 : _a.trim()) || 'UnknownClient';
-    // Lấy base URL từ misaApiUrl (loại bỏ phần /api/v2/Account nếu có)
     let base = cred.misaApiUrl || '';
     if (base.includes('/api/v2/Account')) {
         base = base.replace('/api/v2/Account', '');
@@ -257,7 +255,7 @@ async function getOrCreateClient(cred) {
     return client;
 }
 /**
- * Lưu order vào database (nếu chưa có) - có ghi log processing
+ * Lưu order vào database (nếu chưa có)
  */
 async function upsertOrder(order, clientName, clientDocId) {
     const orderId = order.sale_order_no;
@@ -293,9 +291,46 @@ async function upsertOrder(order, clientName, clientDocId) {
     await addOrderLog(clientName, orderId, 'UPSERT', 'Order created with status new');
     return newOrder;
 }
+// ==================== CÁC HÀM TRỢ GIÚP XỬ LÝ THỜI GIAN & KHỐI LƯỢNG ====================
 /**
- * Gửi order sang Smart Minds (Zeek) - có log chi tiết
+ * Định dạng Date object thành chuỗi "YYYY-MM-DD HH:MM:SS" theo múi giờ UTC+7 (Việt Nam)
+ * @param date - Date object (timestamp bất kỳ)
+ * @returns string theo yêu cầu của Zeek (giờ local +7)
  */
+function formatAppointTime(date) {
+    const offsetMs = 7 * 60 * 60 * 1000; // +7 giờ
+    const utc = date.getTime();
+    const localPlus7 = new Date(utc + offsetMs);
+    const year = localPlus7.getUTCFullYear();
+    const month = String(localPlus7.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(localPlus7.getUTCDate()).padStart(2, '0');
+    const hours = String(localPlus7.getUTCHours()).padStart(2, '0');
+    const minutes = String(localPlus7.getUTCMinutes()).padStart(2, '0');
+    const seconds = String(localPlus7.getUTCSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+/**
+ * Tính tổng khối lượng đơn hàng (kg) từ danh sách sản phẩm
+ * @param productMappings - mảng sale_order_product_mappings từ MISA
+ * @returns tổng weight * amount (kg)
+ */
+function calculateTotalWeight(productMappings) {
+    if (!Array.isArray(productMappings) || productMappings.length === 0) {
+        console.log('⚠️ No product mappings found, total weight = 0');
+        return 0;
+    }
+    let total = 0;
+    for (const item of productMappings) {
+        const weight = Number(item.weight) || 0; // kg mỗi đơn vị
+        const amount = Number(item.amount) || 1;
+        const itemTotal = weight * amount;
+        total += itemTotal;
+        console.log(`  - Product: ${item.description || item.product_code}, weight=${weight} kg, amount=${amount} -> ${itemTotal} kg`);
+    }
+    console.log(`⚖️ Calculated total weight: ${total} kg`);
+    return total;
+}
+// ==================== HÀM SEND_TO_ZEEK CHÍNH (ĐÃ SỬA THEO YÊU CẦU) ====================
 async function sendToZeek(order, clientName) {
     var _a;
     console.log(`📤 Sending order ${order.orderId} to Zeek...`);
@@ -305,23 +340,66 @@ async function sendToZeek(order, clientName) {
     const merchantOrderId = clientOrderId.slice(-6);
     const orderTime = Math.floor(new Date(misa.created_date).getTime() / 1000);
     const timestamp = Math.floor(Date.now() / 1000);
-    // Xử lý số điện thoại: lấy từ order, bỏ số 0 đầu nếu có
+    // Xử lý số điện thoại: bỏ số 0 đầu
     let rawPhone = misa.phone || '';
-    let cleanPhone = rawPhone.replace(/^0+/, ''); // xóa tất cả số 0 ở đầu
+    let cleanPhone = rawPhone.replace(/^0+/, '');
     if (!cleanPhone)
         cleanPhone = '868036856'; // fallback
+    // ----- XỬ LÝ THỜI GIAN GIAO HÀNG -----
+    let isAppoint = 0;
+    let appointTimeStr = '';
+    let deliveryDateTime = null;
+    // Ưu tiên sử dụng custom_field1 (đã có sẵn múi giờ +07:00)
+    const rawAppoint = misa.custom_field1;
+    if (rawAppoint && typeof rawAppoint === 'string') {
+        try {
+            deliveryDateTime = new Date(rawAppoint);
+            if (!isNaN(deliveryDateTime.getTime())) {
+                const createdDate = new Date(misa.created_date);
+                const diffMinutes = (deliveryDateTime.getTime() - createdDate.getTime()) / (1000 * 60);
+                console.log(`📅 custom_field1 = ${rawAppoint}, created_at = ${misa.created_date}, diff = ${diffMinutes.toFixed(2)} minutes`);
+                if (diffMinutes > 60) {
+                    isAppoint = 2;
+                    appointTimeStr = formatAppointTime(deliveryDateTime);
+                    console.log(`   -> is_appoint = 2 (scheduled), appoint_time = ${appointTimeStr} (UTC+7)`);
+                }
+                else {
+                    isAppoint = 0;
+                    console.log(`   -> is_appoint = 0 (within 60 mins), no appoint_time needed`);
+                }
+            }
+            else {
+                console.warn(`⚠️ custom_field1 exists but invalid date: ${rawAppoint}`);
+            }
+        }
+        catch (e) {
+            console.error(`❌ Error parsing custom_field1: ${rawAppoint}`, e);
+        }
+    }
+    else {
+        console.log(`ℹ️ No custom_field1 provided, using default is_appoint = 0`);
+    }
+    // (Giữ nguyên phần fallback nếu cần, nhưng theo yêu cầu mới chỉ dùng custom_field1.
+    // Nếu không có custom_field1 thì is_appoint = 0 và không gửi appoint_time.)
+    // ----- TÍNH TỔNG KHỐI LƯỢNG ĐƠN HÀNG -----
+    const productMappings = misa.sale_order_product_mappings || [];
+    const totalWeight = calculateTotalWeight(productMappings);
+    console.log(`⚖️ Total order weight for ${order.orderId}: ${totalWeight} kg`);
+    // ----- CẤU TRÚC RECEIVER -----
     const receive = {
         user_name: misa.shipping_contact_name || misa.account_name || 'Khách hàng',
         user_phone: cleanPhone,
         user_phone_country_code: '84',
-        user_location: '',
+        user_location: '', // TODO: tích hợp TrackAsia để lấy tọa độ
         user_address: misa.shipping_address || misa.billing_address || 'Địa chỉ mặc định'
     };
+    // ----- PAYLOAD GỬI ZEEK -----
     const payload = {
         auth: {
             appid: Number(ZEEK_APP_ID),
             timestamp: timestamp,
-            signature: ZEEK_APP_SECRET
+            signature: ZEEK_APP_SECRET,
+            secret_key: ZEEK_APP_SECRET
         },
         data: {
             meta: {
@@ -333,18 +411,22 @@ async function sendToZeek(order, clientName) {
             client_order_id: clientOrderId,
             merchant_order_id: merchantOrderId,
             order_time: orderTime,
-            is_appoint: 0,
-            appoint_time: new Date().toISOString(),
+            is_appoint: isAppoint,
             remark: misa.description || '',
             merchant_remark: '',
             cod_type: misa.pay_status === 'Chưa thanh toán' ? 1 : 2,
             receive: receive,
             order_detail: {
                 total_price: misa.to_currency_summary || 0,
-                item_weight: 2
+                item_weight: totalWeight // đã tính tổng khối lượng
             }
         }
     };
+    // Chỉ thêm appoint_time nếu là đơn hẹn giờ (is_appoint = 2)
+    if (isAppoint === 2 && appointTimeStr) {
+        payload.data.appoint_time = appointTimeStr;
+    }
+    // Log chi tiết request
     console.log(`[Zeek Request] URL: ${ZEEK_API_URL}`);
     console.log(`[Zeek Request] Headers: AppID=${ZEEK_APP_ID}, AppSecret=${ZEEK_APP_SECRET}`);
     console.log(`[Zeek Request] Body: ${JSON.stringify(payload, null, 2)}`);
@@ -401,7 +483,6 @@ async function processCredential(cred) {
     console.log(`🚀 [START] MISA to Zeek integration test for ${clientName}`);
     try {
         loadCredential(cred);
-        // 1. Fetch orders using cached token and refresh on 401
         const orders = await fetchMisaOrders();
         if (orders.length === 0) {
             console.log(`No orders to process for ${clientName}. Exiting.`);
@@ -409,9 +490,7 @@ async function processCredential(cred) {
             await writeStepLog(client.documentId, 'no_orders', { message: `No orders from MISA for ${clientName}` }, false);
             return;
         }
-        // 3. Client
         client = await getOrCreateClient(cred);
-        // 4. Xử lý từng order
         let createdCount = 0;
         let sentCount = 0;
         for (const misaOrder of orders) {
@@ -438,7 +517,6 @@ async function processCredential(cred) {
             }
             createdCount++;
         }
-        // 5. Ghi log tổng kết
         const duration = (Date.now() - startTime) / 1000;
         await writeStepLog(client.documentId, 'summary', {
             request: { totalOrders: orders.length, created: createdCount, sent: sentCount, durationSec: duration },
