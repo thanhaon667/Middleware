@@ -1,0 +1,52 @@
+{
+  "kind": "collectionType",
+  "collectionName": "sapo_orders",
+  "info": {
+    "singularName": "sapo-order",
+    "pluralName": "sapo-orders",
+    "displayName": "Sapo Order"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "orderId": {
+      "type": "string"
+    },
+    "clientName": {
+      "type": "string",
+      "required": true
+    },
+    "payload": {
+      "type": "json",
+      "required": true
+    },
+    "orderStatus": {
+      "type": "enumeration",
+      "default": "new",
+      "enum": [
+        "new",
+        "sent",
+        "completed",
+        "failed"
+      ]
+    },
+    "externalOrderId": {
+      "type": "string"
+    },
+    "sentAt": {
+      "type": "datetime"
+    },
+    "processingLog": {
+      "type": "json"
+    },
+    "platform": {
+      "type": "enumeration",
+      "default": "sapo",
+      "enum": [
+        "sapo"
+      ]
+    }
+  }
+}

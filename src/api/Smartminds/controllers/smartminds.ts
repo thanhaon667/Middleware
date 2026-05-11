@@ -178,6 +178,60 @@ function mapZeekStatusToEnum(code: number, desc: string): string {
   }
 }
 
+// ==================== BỔ SUNG HÀM HELPER CHO SAPO ====================
+/**
+ * Lấy SAPO credential từ integration-credential theo clientName
+ */
+async function getSapoCredentialForClient(clientName: string) {
+  console.log(`[SAPO CRED] Fetching credential for client ${clientName}`);
+  const cred = await strapi.db.query('api::integration-credential.integration-credential').findOne({
+    where: { clientName, isActive: true }
+  });
+  if (!cred || !cred.sapoApiKey || !cred.sapoShopDomain) {
+    throw new Error(`SAPO credential missing for client ${clientName}`);
+  }
+  console.log(`[SAPO CRED] Found: shop=${cred.sapoShopDomain}`);
+  return cred;
+}
+
+/**
+ * Cập nhật tags trên SAPO order
+ */
+async function updateSapoOrderTags(sapoOrderId: number, sapoCred: any, newTag: string) {
+  const baseUrl = `https://${sapoCred.sapoApiKey}:${sapoCred.sapoApiSecret}@${sapoCred.sapoShopDomain}`;
+  
+  // 1. Lấy tags hiện tại
+  let currentTags = '';
+  try {
+    console.log(`[SAPO TAGS] GET current tags for order ${sapoOrderId}`);
+    const getUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
+    const getResp = await axios.get(getUrl, { headers: { 'Content-Type': 'application/json' } });
+    currentTags = getResp.data.order.tags || '';
+    console.log(`[SAPO TAGS] Current tags: "${currentTags}"`);
+  } catch (err: any) {
+    console.warn(`[SAPO TAGS] Cannot fetch current tags: ${err.message}`);
+  }
+
+  // 2. Lọc bỏ các tag cũ bắt đầu bằng 'zeek:'
+  let tagsArray = currentTags.split(',').map(t => t.trim()).filter(t => t && !t.startsWith('zeek:'));
+  tagsArray.push(newTag);
+  const updatedTags = tagsArray.join(',');
+  console.log(`[SAPO TAGS] New tags: "${updatedTags}"`);
+
+  // 3. Cập nhật tags
+  const putUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
+  const payload = { order: { id: sapoOrderId, tags: updatedTags } };
+  console.log(`[SAPO TAGS] PUT request to ${putUrl}`);
+  console.log(`[SAPO TAGS] PUT body: ${JSON.stringify(payload, null, 2)}`);
+  const putResp = await axios.put(putUrl, payload, {
+    headers: { 'Content-Type': 'application/json' }
+  });
+  console.log(`[SAPO TAGS] Response status: ${putResp.status}`);
+  console.log(`[SAPO TAGS] Response data: ${JSON.stringify(putResp.data, null, 2)}`);
+  return putResp.data;
+}
+// ==================== KẾT THÚC PHẦN THÊM ====================
+
 // ==================== WEBHOOK CŨ (GIỮ NGUYÊN) ====================
 export default {
   async receive(ctx) {
@@ -401,7 +455,7 @@ export default {
     }
   },
 
-  // ==================== WEBHOOK MỚI THEO CLIENT (GIỮ NGUYÊN LOGIC PUT) ====================
+  // ==================== WEBHOOK MỚI THEO CLIENT ====================
   async receiveByClient(ctx) {
     const { clientName } = ctx.params;
     console.log(`\n========== WEBHOOK RECEIVED FOR CLIENT: ${clientName} ==========`);
@@ -478,7 +532,93 @@ export default {
       }
       console.log(`[WEBHOOK] ✅ Đã tìm thấy order, id: ${order.id}, orderStatus: ${order.orderStatus}`);
 
-      // 9. Map status -> delivery_status MISA
+      // Xác định platform (dựa vào payload có trường 'id' từ SAPO? hoặc dùng order.platform)
+      const platform = order.platform || (order.payload?.id ? 'sapo' : 'misa');
+      console.log(`[WEBHOOK] Detected platform: ${platform}`);
+
+      // ==================== XỬ LÝ RIÊNG CHO SAPO (cập nhật tags) ====================
+      if (platform === 'sapo') {
+        console.log(`[SAPO] Processing Zeek callback for SAPO order ${order.orderId}`);
+
+        // Map Zeek status -> tag tiếng Việt
+        const tagMap: Record<string, string> = {
+          'PICKING_UP': 'zeek:đã_lấy_hàng',
+          'IN_DELIVERY': 'zeek:đang_giao',
+          'COMPLETED': 'zeek:đã_giao',
+          'FAILED': 'zeek:giao_thất_bại'
+        };
+        const newTag = tagMap[statusEnum] || 'zeek:chờ_giao';
+        console.log(`[SAPO] Zeek status ${statusEnum} -> tag: ${newTag}`);
+
+        try {
+          // Lấy SAPO credential
+          const sapoCred = await getSapoCredentialForClient(clientName);
+          const sapoOrderId = order.payload.id;
+          if (!sapoOrderId) {
+            throw new Error('SAPO order id not found in payload');
+          }
+          console.log(`[SAPO] Updating tags for SAPO order ${sapoOrderId}`);
+
+          // Cập nhật tags trên SAPO
+          await updateSapoOrderTags(sapoOrderId, sapoCred, newTag);
+
+          // Cập nhật local database (nếu dùng collection sapo-order)
+          try {
+            const sapoLocalOrder = await strapi.db.query('api::sapo-order.sapo-order').findOne({
+              where: { orderId: order.orderId, clientName }
+            });
+            if (sapoLocalOrder) {
+              let newStatus = order.orderStatus;
+              if (statusEnum === 'COMPLETED') newStatus = 'completed';
+              else if (statusEnum === 'FAILED') newStatus = 'failed';
+              else if (statusEnum === 'IN_DELIVERY' || statusEnum === 'PICKING_UP') newStatus = 'processing';
+
+              await strapi.db.query('api::sapo-order.sapo-order').update({
+                where: { id: sapoLocalOrder.id },
+                data: {
+                  orderStatus: newStatus,
+                  zeekStatus: statusEnum,
+                  processingLog: {
+                    push: {
+                      timestamp: new Date().toISOString(),
+                      step: 'zeek_callback',
+                      message: `Zeek status ${statusEnum} -> tag ${newTag}`
+                    }
+                  }
+                }
+              });
+              console.log(`[SAPO] Local sapo-order updated (id=${sapoLocalOrder.id})`);
+            } else {
+              console.warn(`[SAPO] No sapo-order record found for orderId ${order.orderId}`);
+            }
+          } catch (localErr) {
+            console.error(`[SAPO] Failed to update local sapo-order: ${localErr.message}`);
+          }
+
+          // Ghi integration log
+          await strapi.db.query('api::integration-log.integration-log').create({
+            data: {
+              direction: 'incoming',
+              endpoint: `/smartminds/webhook/${clientName}`,
+              requestBody: rawPayload,
+              responseBody: { ok: true, tag: newTag },
+              logStatus: 'success'
+            }
+          });
+
+          ctx.status = 200;
+          ctx.body = { error: 0, err_msg: '', updated_tag: newTag };
+          console.log(`========== WEBHOOK FOR SAPO CLIENT ${clientName} PROCESSED ==========`);
+          return; // Kết thúc, không chạy phần MISA
+        } catch (sapoErr) {
+          console.error(`[SAPO] Error updating SAPO: ${sapoErr.message}`);
+          ctx.status = 500;
+          ctx.body = { error: 1, err_msg: sapoErr.message };
+          return;
+        }
+      }
+
+      // ==================== XỬ LÝ CHO MISA (GIỮ NGUYÊN) ====================
       const statusMapping: Record<string, string> = {
         'COMPLETED': 'Đã giao hàng',
         'FAILED': 'Chưa giao hàng',
@@ -488,7 +628,6 @@ export default {
       const deliveryStatus = statusMapping[statusEnum] || 'Chưa giao hàng';
       console.log(`[WEBHOOK] delivery_status sẽ cập nhật: ${deliveryStatus} (từ enum ${statusEnum})`);
 
-      // 10. Tạo updatedPayload (giống logic cũ)
       const { list_product_category, list_product, organization_unit_name, ...restPayload } = order.payload;
 
       const updatedPayload = {
@@ -515,7 +654,6 @@ export default {
 
       console.log('[WEBHOOK] Đã tạo updatedPayload (giữ nguyên mọi trường, chỉ cập nhật delivery_status và thêm zeek fields)');
 
-      // 11. Lấy token MISA từ credential của client
       let token;
       try {
         token = await getMisaTokenByCredential(credential);
@@ -527,14 +665,12 @@ export default {
         return;
       }
 
-      // 12. Xác định base URL MISA từ credential
       let misaBaseUrl = credential.misaApiUrl;
       if (misaBaseUrl.includes('/api/v2/Account')) {
         misaBaseUrl = misaBaseUrl.replace('/api/v2/Account', '');
       }
       const misaAppId = credential.misaAppID;
 
-      // 13. Gửi PUT lên MISA (GIỮ NGUYÊN CÁCH GỬI MẢNG)
       const putUrl = `${misaBaseUrl}/api/v2/SaleOrders`;
       let response;
       try {
@@ -572,7 +708,6 @@ export default {
         return;
       }
 
-      // 14. Kiểm tra phản hồi MISA (giống logic cũ)
       let success = false;
       let errorMsg = '';
       if (response.data && typeof response.data === 'object') {
@@ -603,7 +738,6 @@ export default {
         return;
       }
 
-      // 15. Cập nhật local database (giống logic cũ)
       console.log('[WEBHOOK] Cập nhật local database...');
       let newOrderStatus = order.orderStatus;
       if (statusEnum === 'COMPLETED') newOrderStatus = 'completed';
@@ -630,10 +764,8 @@ export default {
       });
       console.log('[WEBHOOK] ✅ Đã cập nhật local database');
 
-      // 16. Ghi log thành công
       await addOrderLog(merchantOrderID, 'WEBHOOK_SUCCESS', `Successfully updated MISA: ${deliveryStatus}`);
 
-      // 17. Ghi integration log
       console.log('[WEBHOOK] Ghi log vào integration-log...');
       await strapi.db.query('api::integration-log.integration-log').create({
         data: {

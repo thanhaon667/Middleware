@@ -41,6 +41,15 @@
         },
         "clientMerchantId": {
             "type": "string"
+        },
+        "sapoApiKey": {
+            "type": "string"
+        },
+        "sapoApiSecret": {
+            "type": "string"
+        },
+        "sapoShopDomain": {
+            "type": "string"
         }
     }
 }

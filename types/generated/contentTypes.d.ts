@@ -523,6 +523,9 @@ export interface ApiIntegrationCredentialIntegrationCredential
     misaClientId: Schema.Attribute.String;
     misaClientSecret: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
+    sapoApiKey: Schema.Attribute.String;
+    sapoApiSecret: Schema.Attribute.String;
+    sapoShopDomain: Schema.Attribute.String;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -668,6 +671,45 @@ export interface ApiPlatformConnectionPlatformConnection
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     webhookSecret: Schema.Attribute.String;
+  };
+}
+
+export interface ApiSapoOrderSapoOrder extends Struct.CollectionTypeSchema {
+  collectionName: 'sapo_orders';
+  info: {
+    displayName: 'Sapo Order';
+    pluralName: 'sapo-orders';
+    singularName: 'sapo-order';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    clientName: Schema.Attribute.String & Schema.Attribute.Required;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    externalOrderId: Schema.Attribute.String;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::sapo-order.sapo-order'
+    > &
+      Schema.Attribute.Private;
+    orderId: Schema.Attribute.String;
+    orderStatus: Schema.Attribute.Enumeration<
+      ['new', 'sent', 'completed', 'failed']
+    > &
+      Schema.Attribute.DefaultTo<'new'>;
+    payload: Schema.Attribute.JSON & Schema.Attribute.Required;
+    platform: Schema.Attribute.Enumeration<['sapo']> &
+      Schema.Attribute.DefaultTo<'sapo'>;
+    processingLog: Schema.Attribute.JSON;
+    publishedAt: Schema.Attribute.DateTime;
+    sentAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
   };
 }
 
@@ -1220,6 +1262,7 @@ declare module '@strapi/strapi' {
       'api::max-thanh.max-thanh': ApiMaxThanhMaxThanh;
       'api::order.order': ApiOrderOrder;
       'api::platform-connection.platform-connection': ApiPlatformConnectionPlatformConnection;
+      'api::sapo-order.sapo-order': ApiSapoOrderSapoOrder;
       'api::setting.setting': ApiSettingSetting;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;
