@@ -94,7 +94,8 @@ exports.default = {
             const sapoOrder = ctx.request.body;
             logJson('Incoming Webhook from SAPO', sapoOrder);
             const orderId = String(sapoOrder.id);
-            console.log(`📦 Order ID: ${orderId}, Name: ${sapoOrder.name}`);
+            const merchantOrderId = String(sapoOrder.order_number || sapoOrder.id).slice(-6);
+            console.log(`📦 Order ID: ${orderId}, Name: ${sapoOrder.name}, merchantOrderId: ${merchantOrderId}`);
             // 3. Kiểm tra trùng lặp (dùng collection sapo-order)
             const existing = await strapi.db.query('api::sapo-order.sapo-order').findOne({
                 where: { orderId, clientName },
@@ -105,10 +106,12 @@ exports.default = {
                 ctx.body = { ok: true, message: 'already processed' };
                 return;
             }
-            // 4. Tạo bản ghi mới trong collection sapo-order
-            const newOrder = await strapi.db.query('api::sapo-order.sapo-order').create({
+            // 4. Tạo bản ghi mới trong collection sapo-order ở trạng thái live
+            const newOrder = await strapi.entityService.create('api::sapo-order.sapo-order', {
                 data: {
                     orderId,
+                    merchantOrderId,
+                    orderName: sapoOrder.name || `Order ${orderId}`,
                     clientName,
                     payload: sapoOrder,
                     orderStatus: 'new',
@@ -121,8 +124,10 @@ exports.default = {
                         },
                     ],
                 },
+                publicationState: 'live',
             });
             console.log(`✅ Order saved with local ID: ${newOrder.id}`);
+            console.log(`📢 Order created live in CMS`);
             // 5. Map và gửi sang Zeek
             const zeekPayload = mapSapoOrderToZeek(sapoOrder, cred);
             const zeekOrderId = await sendToZeek(zeekPayload, cred);
@@ -148,6 +153,60 @@ exports.default = {
         }
         catch (error) {
             console.error('🔥 [SAPO] Critical error:', error);
+            ctx.status = 500;
+            ctx.body = { error: error.message };
+        }
+    },
+    // Debug function - kiểm tra sapo-order data
+    async debugOrders(ctx) {
+        const { clientName } = ctx.params;
+        console.log(`\n🔍 [DEBUG] Checking sapo-orders for client: ${clientName}`);
+        try {
+            const orders = await strapi.db.query('api::sapo-order.sapo-order').findMany({
+                where: { clientName },
+                limit: 10,
+                orderBy: { createdAt: 'desc' },
+            });
+            console.log(`📊 Found ${orders.length} sapo-orders for ${clientName}`);
+            // Log chi tiết từng order
+            orders.forEach((order, index) => {
+                console.log(`\n--- Order ${index + 1} ---`);
+                console.log(`ID: ${order.id}`);
+                console.log(`orderId: ${order.orderId}`);
+                console.log(`merchantOrderId: ${order.merchantOrderId}`);
+                console.log(`orderStatus: ${order.orderStatus}`);
+                console.log(`platform: ${order.platform}`);
+                console.log(`publishedAt: ${order.publishedAt}`);
+                console.log(`Payload exists: ${!!order.payload}`);
+                if (order.payload) {
+                    console.log(`Payload keys: ${Object.keys(order.payload).join(', ')}`);
+                    console.log(`Order name from payload: ${order.payload.name}`);
+                }
+                else {
+                    console.log('Payload is null/undefined');
+                }
+            });
+            ctx.status = 200;
+            ctx.body = {
+                count: orders.length,
+                orders: orders.map(order => {
+                    var _a;
+                    return ({
+                        id: order.id,
+                        orderId: order.orderId,
+                        merchantOrderId: order.merchantOrderId,
+                        orderStatus: order.orderStatus,
+                        platform: order.platform,
+                        publishedAt: order.publishedAt,
+                        hasPayload: !!order.payload,
+                        payloadKeys: order.payload ? Object.keys(order.payload) : null,
+                        orderName: ((_a = order.payload) === null || _a === void 0 ? void 0 : _a.name) || null,
+                    });
+                })
+            };
+        }
+        catch (error) {
+            console.error('🔥 [DEBUG] Error:', error);
             ctx.status = 500;
             ctx.body = { error: error.message };
         }

@@ -212,8 +212,8 @@ async function updateSapoOrderTags(sapoOrderId: number, sapoCred: any, newTag: s
     console.warn(`[SAPO TAGS] Cannot fetch current tags: ${err.message}`);
   }
 
-  // 2. Lọc bỏ các tag cũ bắt đầu bằng 'zeek:'
-  let tagsArray = currentTags.split(',').map(t => t.trim()).filter(t => t && !t.startsWith('zeek:'));
+  // 2. Lọc bỏ các tag cũ bắt đầu bằng 'zeek:' hoặc 'SmartMinds:'
+  let tagsArray = currentTags.split(',').map(t => t.trim()).filter(t => t && !t.startsWith('zeek:') && !t.startsWith('SmartMinds:'));
   tagsArray.push(newTag);
   const updatedTags = tagsArray.join(',');
   console.log(`[SAPO TAGS] New tags: "${updatedTags}"`);
@@ -423,7 +423,7 @@ export default {
             {
               timestamp: new Date().toISOString(),
               step: 'WEBHOOK',
-              message: `Order updated to delivery_status = ${deliveryStatus} (Zeek status: ${statusEnum})`,
+              message: `Order updated to delivery_status = ${deliveryStatus} (SmartMinds status: ${statusEnum})`,
               isError: false
             }
           ]
@@ -486,13 +486,14 @@ export default {
 
       // 3. merchantOrderID
       const merchantOrderID = zeekData.client_order_id || zeekData.order_id;
-      if (!merchantOrderID) {
-        console.error('[WEBHOOK] ❌ Thiếu client_order_id/order_id');
+      const fallbackMerchantOrderID = zeekData.merchant_order_id || null;
+      if (!merchantOrderID && !fallbackMerchantOrderID) {
+        console.error('[WEBHOOK] ❌ Thiếu client_order_id/order_id/merchant_order_id');
         ctx.status = 400;
         ctx.body = { error: 'Missing merchantOrderID' };
         return;
       }
-      console.log(`[WEBHOOK] merchantOrderID: ${merchantOrderID}`);
+      console.log(`[WEBHOOK] merchantOrderID: ${merchantOrderID || 'none'}, merchant_order_id: ${fallbackMerchantOrderID}`);
 
       // 4. order_status
       const orderStatusCode = zeekData.order_status;
@@ -514,27 +515,65 @@ export default {
 
       console.log(`[WEBHOOK] deliveryID = ${deliveryID}, driver = ${JSON.stringify(driver)}`);
 
-      // 7. Ghi log nhận webhook
-      await addOrderLog(merchantOrderID, 'WEBHOOK_RECEIVED', `Client ${clientName}: status=${orderStatusCode}, mapped=${statusEnum}`);
+      // 7. Ghi log nhận webhook (search log sẽ được thực hiện sau khi tìm được order)
 
       // 8. Tìm order theo orderId + clientName
       console.log(`[WEBHOOK] Tìm order với orderId = ${merchantOrderID}, clientName = ${clientName}...`);
-      const order = await strapi.db.query('api::order.order').findOne({
-        where: { orderId: merchantOrderID, clientName: clientName }
-      });
+      
+      // 🔄 THÊM PHẦN TÌM TRONG SAPO-ORDER TRƯỚC
+      let order = null;
+      let platform = null;
+
+      // Thử tìm trong sapo-order collection trước (dành cho đơn hàng SAPO)
+      try {
+        if (merchantOrderID) {
+          order = await strapi.db.query('api::sapo-order.sapo-order').findOne({
+            where: { orderId: merchantOrderID, clientName: clientName }
+          });
+        }
+        if (!order && fallbackMerchantOrderID) {
+          order = await strapi.db.query('api::sapo-order.sapo-order').findOne({
+            where: { merchantOrderId: fallbackMerchantOrderID, clientName: clientName }
+          });
+        }
+        if (order) {
+          platform = 'sapo';
+          console.log(`[WEBHOOK] ✅ Tìm thấy order trong sapo-order (id=${order.id})`);
+          // Gắn thêm trường platform tạm thời cho đối tượng order để xử lý sau
+          order.platform = 'sapo';
+        }
+      } catch (err) {
+        console.warn(`[WEBHOOK] Không thể truy cập sapo-order: ${err.message}`);
+      }
+
+      // Nếu không tìm thấy trong sapo-order, tìm trong order collection (MISA)
+      if (!order) {
+        order = await strapi.db.query('api::order.order').findOne({
+          where: { orderId: merchantOrderID, clientName: clientName }
+        });
+        if (order) {
+          platform = order.platform || 'misa';
+          console.log(`[WEBHOOK] ✅ Tìm thấy order trong order collection (id=${order.id}, platform=${platform})`);
+        }
+      }
 
       if (!order) {
         console.error(`[WEBHOOK] ❌ Không tìm thấy order ${merchantOrderID} cho client ${clientName}`);
-        await addOrderLog(merchantOrderID, 'WEBHOOK_ERROR', `Order not found for client ${clientName}`, true);
-        ctx.status = 404;
-        ctx.body = { error: 'Order not found' };
+        // Trả về 200 để Zeek không retry (có thể order chưa sync kịp)
+        ctx.status = 200;
+        ctx.body = { error: 0, err_msg: 'Order not found' };
         return;
       }
-      console.log(`[WEBHOOK] ✅ Đã tìm thấy order, id: ${order.id}, orderStatus: ${order.orderStatus}`);
+      console.log(`[WEBHOOK] Order hiện tại: id=${order.id}, orderStatus=${order.orderStatus}`);
 
-      // Xác định platform (dựa vào payload có trường 'id' từ SAPO? hoặc dùng order.platform)
-      const platform = order.platform || (order.payload?.id ? 'sapo' : 'misa');
+      // Xác định platform (nếu chưa có)
+      if (!platform) {
+        platform = order.platform || (order.payload?.id ? 'sapo' : 'misa');
+      }
       console.log(`[WEBHOOK] Detected platform: ${platform}`);
+
+      // Ghi log nhận webhook (sau khi đã có orderId)
+      await addOrderLog(merchantOrderID, 'WEBHOOK_RECEIVED', `Client ${clientName}: status=${orderStatusCode}, mapped=${statusEnum}`);
 
       // ==================== XỬ LÝ RIÊNG CHO SAPO (cập nhật tags) ====================
       if (platform === 'sapo') {
@@ -542,12 +581,12 @@ export default {
 
         // Map Zeek status -> tag tiếng Việt
         const tagMap: Record<string, string> = {
-          'PICKING_UP': 'zeek:đã_lấy_hàng',
-          'IN_DELIVERY': 'zeek:đang_giao',
-          'COMPLETED': 'zeek:đã_giao',
-          'FAILED': 'zeek:giao_thất_bại'
+          'PICKING_UP': 'SmartMinds:đã_lấy_hàng',
+          'IN_DELIVERY': 'SmartMinds:đang_giao',
+          'COMPLETED': 'SmartMinds:đã_giao',
+          'FAILED': 'SmartMinds:giao_thất_bại'
         };
-        const newTag = tagMap[statusEnum] || 'zeek:chờ_giao';
+        const newTag = tagMap[statusEnum] || 'SmartMinds:chờ_giao';
         console.log(`[SAPO] Zeek status ${statusEnum} -> tag: ${newTag}`);
 
         try {
@@ -562,8 +601,31 @@ export default {
           // Cập nhật tags trên SAPO
           await updateSapoOrderTags(sapoOrderId, sapoCred, newTag);
 
-          // Cập nhật local database (nếu dùng collection sapo-order)
-          try {
+          // Cập nhật local database (nếu order lấy từ sapo-order)
+          if (order.platform === 'sapo') {
+            // Đã là bản ghi sapo-order, cập nhật trực tiếp
+            let newStatus = order.orderStatus;
+            if (statusEnum === 'COMPLETED') newStatus = 'completed';
+            else if (statusEnum === 'FAILED') newStatus = 'failed';
+            else if (statusEnum === 'IN_DELIVERY' || statusEnum === 'PICKING_UP') newStatus = 'processing';
+
+            await strapi.db.query('api::sapo-order.sapo-order').update({
+              where: { id: order.id },
+              data: {
+                orderStatus: newStatus,
+                zeekStatus: statusEnum,
+                processingLog: {
+                  push: {
+                    timestamp: new Date().toISOString(),
+                    step: 'zeek_callback',
+                    message: `Zeek status ${statusEnum} -> tag ${newTag}`
+                  }
+                }
+              }
+            });
+            console.log(`[SAPO] Local sapo-order updated (id=${order.id})`);
+          } else {
+            // Thử tìm lại trong sapo-order nếu order lấy từ order collection (trường hợp hiếm)
             const sapoLocalOrder = await strapi.db.query('api::sapo-order.sapo-order').findOne({
               where: { orderId: order.orderId, clientName }
             });
@@ -591,8 +653,6 @@ export default {
             } else {
               console.warn(`[SAPO] No sapo-order record found for orderId ${order.orderId}`);
             }
-          } catch (localErr) {
-            console.error(`[SAPO] Failed to update local sapo-order: ${localErr.message}`);
           }
 
           // Ghi integration log
@@ -756,7 +816,7 @@ export default {
             {
               timestamp: new Date().toISOString(),
               step: 'WEBHOOK',
-              message: `Order updated to delivery_status = ${deliveryStatus} (Zeek status: ${statusEnum})`,
+              message: `Order updated to delivery_status = ${deliveryStatus} (SmartMinds status: ${statusEnum})`,
               isError: false
             }
           ]

@@ -9,9 +9,22 @@
   "options": {
     "draftAndPublish": true
   },
-  "pluginOptions": {},
+  "pluginOptions": {
+    "content-manager": {
+      "visible": true
+    },
+    "content-type-builder": {
+      "visible": false
+    }
+  },
   "attributes": {
     "orderId": {
+      "type": "string"
+    },
+    "merchantOrderId": {
+      "type": "string"
+    },
+    "orderName": {
       "type": "string"
     },
     "clientName": {

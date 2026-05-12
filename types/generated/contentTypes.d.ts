@@ -684,6 +684,14 @@ export interface ApiSapoOrderSapoOrder extends Struct.CollectionTypeSchema {
   options: {
     draftAndPublish: true;
   };
+  pluginOptions: {
+    'content-manager': {
+      visible: true;
+    };
+    'content-type-builder': {
+      visible: false;
+    };
+  };
   attributes: {
     clientName: Schema.Attribute.String & Schema.Attribute.Required;
     createdAt: Schema.Attribute.DateTime;
@@ -696,7 +704,9 @@ export interface ApiSapoOrderSapoOrder extends Struct.CollectionTypeSchema {
       'api::sapo-order.sapo-order'
     > &
       Schema.Attribute.Private;
+    merchantOrderId: Schema.Attribute.String;
     orderId: Schema.Attribute.String;
+    orderName: Schema.Attribute.String;
     orderStatus: Schema.Attribute.Enumeration<
       ['new', 'sent', 'completed', 'failed']
     > &
