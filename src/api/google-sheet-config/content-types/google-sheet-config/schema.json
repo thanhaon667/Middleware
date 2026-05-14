@@ -1,0 +1,58 @@
+{
+  "kind": "collectionType",
+  "collectionName": "google_sheet_configs",
+  "info": {
+    "singularName": "google-sheet-config",
+    "pluralName": "google-sheet-configs",
+    "displayName": "Google Sheet Config"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "clientName": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "sheetUrl": {
+      "type": "string",
+      "required": true
+    },
+    "sheetId": {
+      "type": "string",
+      "required": true
+    },
+    "sheetTab": {
+      "type": "string",
+      "default": "Orders"
+    },
+    "isActive": {
+      "type": "boolean",
+      "default": true
+    },
+    "googleAccessToken": {
+      "type": "text",
+      "private": true
+    },
+    "googleRefreshToken": {
+      "type": "text",
+      "private": true
+    },
+    "tokenExpiresAt": {
+      "type": "datetime"
+    },
+    "lastSyncedAt": {
+      "type": "datetime"
+    },
+    "lastSyncStatus": {
+      "type": "enumeration",
+      "enum": ["success", "failed", "never"],
+      "default": "never"
+    },
+    "lastSyncMessage": {
+      "type": "text"
+    }
+  }
+}

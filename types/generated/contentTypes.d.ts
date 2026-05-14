@@ -494,6 +494,50 @@ export interface ApiClientClient extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiGoogleSheetConfigGoogleSheetConfig
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'google_sheet_configs';
+  info: {
+    displayName: 'Google Sheet Config';
+    pluralName: 'google-sheet-configs';
+    singularName: 'google-sheet-config';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  attributes: {
+    clientName: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    googleAccessToken: Schema.Attribute.Text & Schema.Attribute.Private;
+    googleRefreshToken: Schema.Attribute.Text & Schema.Attribute.Private;
+    isActive: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<true>;
+    lastSyncedAt: Schema.Attribute.DateTime;
+    lastSyncMessage: Schema.Attribute.Text;
+    lastSyncStatus: Schema.Attribute.Enumeration<
+      ['success', 'failed', 'never']
+    > &
+      Schema.Attribute.DefaultTo<'never'>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::google-sheet-config.google-sheet-config'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    sheetId: Schema.Attribute.String & Schema.Attribute.Required;
+    sheetTab: Schema.Attribute.String & Schema.Attribute.DefaultTo<'Orders'>;
+    sheetUrl: Schema.Attribute.String & Schema.Attribute.Required;
+    tokenExpiresAt: Schema.Attribute.DateTime;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiIntegrationCredentialIntegrationCredential
   extends Struct.CollectionTypeSchema {
   collectionName: 'integration_credentials';
@@ -1270,6 +1314,7 @@ declare module '@strapi/strapi' {
       'admin::transfer-token-permission': AdminTransferTokenPermission;
       'admin::user': AdminUser;
       'api::client.client': ApiClientClient;
+      'api::google-sheet-config.google-sheet-config': ApiGoogleSheetConfigGoogleSheetConfig;
       'api::integration-credential.integration-credential': ApiIntegrationCredentialIntegrationCredential;
       'api::integration-log.integration-log': ApiIntegrationLogIntegrationLog;
       'api::max-thanh.max-thanh': ApiMaxThanhMaxThanh;
