@@ -13,7 +13,7 @@ exports.default = {
             method: 'GET',
             path: '/sapo/debug-orders/:clientName',
             handler: 'sapo.debugOrders',
-            config: { auth: true },
+            config: { auth: false },
         },
     ],
 };

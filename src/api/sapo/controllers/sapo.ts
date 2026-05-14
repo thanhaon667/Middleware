@@ -245,6 +245,12 @@ export default {
 
   // Debug function - kiểm tra sapo-order data
   async debugOrders(ctx) {
+    if (process.env.NODE_ENV === 'production') {
+      ctx.status = 403;
+      ctx.body = { error: 'Debug endpoint is disabled in production' };
+      return;
+    }
+
     const { clientName } = ctx.params;
     console.log(`\n🔍 [DEBUG] Checking sapo-orders for client: ${clientName}`);
 

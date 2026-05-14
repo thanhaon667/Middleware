@@ -453,10 +453,6 @@ export interface ApiClientClient extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
-    Client: Schema.Attribute.Relation<
-      'oneToMany',
-      'api::integration-log.integration-log'
-    >;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -466,6 +462,10 @@ export interface ApiClientClient extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
+    integration_logs: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::integration-log.integration-log'
+    >;
     isActive: Schema.Attribute.Boolean &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
@@ -552,7 +552,7 @@ export interface ApiIntegrationLogIntegrationLog
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     direction: Schema.Attribute.Enumeration<['incoming', 'outgoing']>;
-    Endpoint: Schema.Attribute.String;
+    endpoint: Schema.Attribute.String;
     errorMessage: Schema.Attribute.Text;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
@@ -560,7 +560,7 @@ export interface ApiIntegrationLogIntegrationLog
       'api::integration-log.integration-log'
     > &
       Schema.Attribute.Private;
-    logStatus: Schema.Attribute.Enumeration<['success', 'failed,', 'pending']>;
+    logStatus: Schema.Attribute.Enumeration<['success', 'failed', 'pending']>;
     publishedAt: Schema.Attribute.DateTime;
     requestBody: Schema.Attribute.JSON;
     responseBody: Schema.Attribute.JSON;
@@ -609,11 +609,12 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     draftAndPublish: true;
   };
   attributes: {
-    Client: Schema.Attribute.Relation<'manyToOne', 'api::client.client'>;
+    client: Schema.Attribute.Relation<'manyToOne', 'api::client.client'>;
     clientName: Schema.Attribute.String;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    externalOrderId: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::order.order'> &
       Schema.Attribute.Private;
@@ -629,7 +630,8 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     >;
     processingLog: Schema.Attribute.JSON;
     publishedAt: Schema.Attribute.DateTime;
-    SentAt: Schema.Attribute.DateTime;
+    sentAt: Schema.Attribute.DateTime;
+    source: Schema.Attribute.Enumeration<['MISA', 'SAPO']>;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -739,7 +741,7 @@ export interface ApiSettingSetting extends Struct.CollectionTypeSchema {
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     description: Schema.Attribute.Text;
-    Key: Schema.Attribute.String &
+    key: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'misa_test_cron_enabled'>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
