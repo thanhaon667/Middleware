@@ -6,11 +6,33 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const axios_1 = __importDefault(require("axios"));
 // Helper lấy credential SAPO (có chứa cả thông tin Zeek)
 async function getSapoCredential(clientName) {
+    const normalizedName = clientName === null || clientName === void 0 ? void 0 : clientName.trim();
     const cred = await strapi.db.query('api::integration-credential.integration-credential').findOne({
-        where: { clientName, isActive: true }
+        where: {
+            clientName: { $eqi: normalizedName },
+            isActive: true,
+        },
     });
-    if (!cred || !cred.sapoApiKey || !cred.sapoShopDomain || !cred.zeekApiUrl) {
-        throw new Error(`Credential incomplete for ${clientName}`);
+    if (!cred) {
+        throw new Error(`Credential not found for ${clientName}. Verify the integration-credential entry is published, active, and uses the same clientName.`);
+    }
+    const missingFields = [];
+    if (!cred.sapoApiKey)
+        missingFields.push('sapoApiKey');
+    if (!cred.sapoApiSecret)
+        missingFields.push('sapoApiSecret');
+    if (!cred.sapoShopDomain)
+        missingFields.push('sapoShopDomain');
+    if (!cred.zeekApiUrl)
+        missingFields.push('zeekApiUrl');
+    if (!cred.zeekAppId)
+        missingFields.push('zeekAppId');
+    if (!cred.zeekAppSecret)
+        missingFields.push('zeekAppSecret');
+    if (!cred.clientMerchantId)
+        missingFields.push('clientMerchantId');
+    if (missingFields.length) {
+        throw new Error(`Credential incomplete for ${clientName}. Missing: ${missingFields.join(', ')}`);
     }
     return cred;
 }
@@ -83,6 +105,37 @@ async function sendToZeek(payload, cred) {
     }
     return response.data.data.order_id;
 }
+async function updateSapoOrderTag(sapoOrderId, cred, newTag) {
+    var _a;
+    const baseUrl = `https://${cred.sapoApiKey}:${cred.sapoApiSecret}@${cred.sapoShopDomain}`;
+    const getUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
+    let currentTags = '';
+    try {
+        const getResp = await axios_1.default.get(getUrl, {
+            headers: { 'Content-Type': 'application/json' },
+        });
+        currentTags = ((_a = getResp.data.order) === null || _a === void 0 ? void 0 : _a.tags) || '';
+        console.log(`[SAPO TAG] Current tags for order ${sapoOrderId}: ${currentTags}`);
+    }
+    catch (err) {
+        console.warn(`[SAPO TAG] Cannot fetch current tags for order ${sapoOrderId}: ${err.message}`);
+    }
+    const tagsArray = currentTags
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t && !t.startsWith('Smart Minds') && !t.startsWith('SmartMinds:') && !t.startsWith('SmartMinds'));
+    tagsArray.push(newTag);
+    const updatedTags = tagsArray.join(',');
+    const putUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
+    const payload = { order: { id: sapoOrderId, tags: updatedTags } };
+    console.log(`[SAPO TAG] PUT ${putUrl}`);
+    console.log(`[SAPO TAG] Body: ${JSON.stringify(payload, null, 2)}`);
+    const putResp = await axios_1.default.put(putUrl, payload, {
+        headers: { 'Content-Type': 'application/json' },
+    });
+    console.log(`[SAPO TAG] Update response: ${JSON.stringify(putResp.data, null, 2)}`);
+    return updatedTags;
+}
 exports.default = {
     async receiveOrder(ctx) {
         const { clientName } = ctx.params;
@@ -132,22 +185,46 @@ exports.default = {
             const zeekPayload = mapSapoOrderToZeek(sapoOrder, cred);
             const zeekOrderId = await sendToZeek(zeekPayload, cred);
             console.log(`🚀 Zeek order created: ${zeekOrderId}`);
-            // 6. Cập nhật trạng thái order
-            await strapi.db.query('api::sapo-order.sapo-order').update({
-                where: { id: newOrder.id },
-                data: {
-                    orderStatus: 'sent',
-                    externalOrderId: zeekOrderId,
-                    sentAt: new Date().toISOString(),
-                    processingLog: {
-                        push: {
-                            timestamp: new Date().toISOString(),
-                            step: 'sent_to_zeek',
-                            message: `Zeek order ID: ${zeekOrderId}`,
+            // 6. Ghi tag SAPO: SmartMinds đã tiếp nhận
+            const sapoOrderId = sapoOrder.id;
+            try {
+                const updatedTags = await updateSapoOrderTag(sapoOrderId, cred, 'SmartMinds:đã tiếp nhận');
+                console.log(`🏷️ SAPO order ${sapoOrderId} tagged: ${updatedTags}`);
+                await strapi.db.query('api::sapo-order.sapo-order').update({
+                    where: { id: newOrder.id },
+                    data: {
+                        orderStatus: 'sent',
+                        externalOrderId: zeekOrderId,
+                        sentAt: new Date().toISOString(),
+                        processingLog: {
+                            push: {
+                                timestamp: new Date().toISOString(),
+                                step: 'sapo_tag_updated',
+                                message: `SAPO tag updated: ${updatedTags}`,
+                            },
                         },
                     },
-                },
-            });
+                });
+            }
+            catch (tagError) {
+                console.warn(`⚠️ [SAPO] Tag update failed for order ${sapoOrderId}: ${tagError.message}`);
+                await strapi.db.query('api::sapo-order.sapo-order').update({
+                    where: { id: newOrder.id },
+                    data: {
+                        orderStatus: 'sent',
+                        externalOrderId: zeekOrderId,
+                        sentAt: new Date().toISOString(),
+                        processingLog: {
+                            push: {
+                                timestamp: new Date().toISOString(),
+                                step: 'sapo_tag_failed',
+                                message: `SAPO tag update failed: ${tagError.message}`,
+                            },
+                        },
+                    },
+                });
+                throw tagError;
+            }
             ctx.status = 200;
             ctx.body = { ok: true, zeekOrderId };
         }

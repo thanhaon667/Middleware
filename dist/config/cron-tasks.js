@@ -33,7 +33,6 @@ exports.default = {
                 where: { key: 'misa_test_cron_enabled' }
             });
             if (!setting || setting.value !== true) {
-                // Không làm gì nếu chưa bật
                 return;
             }
             console.log('>>> TEST CRON for MISA direct (enabled)');
@@ -42,6 +41,23 @@ exports.default = {
         }
         catch (err) {
             strapi.log.error('Test cron error:', err);
+        }
+    },
+    // Cron Sapo: mỗi 5 phút, lấy đơn hàng cập nhật gần nhất để tránh miss order/webhook
+    '*/5 * * * *': async () => {
+        try {
+            const setting = await strapi.db.query('api::setting.setting').findOne({
+                where: { key: 'sapo_test_cron_enabled' }
+            });
+            if (!setting || setting.value !== true) {
+                return;
+            }
+            console.log('>>> SAPO cron sync enabled');
+            const { testSapo } = await Promise.resolve().then(() => __importStar(require('../src/scripts/test-sapo')));
+            await testSapo();
+        }
+        catch (err) {
+            strapi.log.error('SAPO cron error:', err);
         }
     }
 };

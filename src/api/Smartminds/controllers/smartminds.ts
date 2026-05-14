@@ -846,5 +846,45 @@ export default {
       ctx.status = 500;
       ctx.body = { error: 1, err_msg: error.message };
     }
+  },
+
+  // Test SAPO API endpoint
+  async testSapo(ctx) {
+    console.log('\n========== TEST SAPO API ==========');
+    try {
+      const { testSapo } = await import('../../../scripts/test-sapo');
+      await testSapo();
+      ctx.status = 200;
+      ctx.body = { success: true, message: 'SAPO test completed - check logs' };
+    } catch (error) {
+      console.error('[TEST SAPO] ❌ Error:', error);
+      ctx.status = 500;
+      ctx.body = { success: false, error: error.message };
+    }
+  },
+
+  // Update SAPO credentials for TestSa
+  async updateSapoCredentials(ctx) {
+    console.log('\n========== UPDATE SAPO CREDENTIALS ==========');
+    try {
+      const updated = await strapi.db.query('api::integration-credential.integration-credential').update({
+        where: { clientName: 'TestSa' },
+        data: {
+          clientMerchantId: 'SMVN01',
+          sapoApiKey: '31ad7fce508c4f969e121cf0798683cd',
+          sapoApiSecret: '5364aa9489ec4659b8d44bb1703dca1a',
+          sapoShopDomain: 'lonege.mysapo.net',
+          isActive: true
+        }
+      });
+
+      console.log('✅ SAPO credentials updated successfully!');
+      ctx.status = 200;
+      ctx.body = { success: true, message: 'Credentials updated', data: updated };
+    } catch (error) {
+      console.error('[UPDATE CREDENTIALS] ❌ Error:', error);
+      ctx.status = 500;
+      ctx.body = { success: false, error: error.message };
+    }
   }
 };

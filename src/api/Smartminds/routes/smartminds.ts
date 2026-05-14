@@ -14,5 +14,26 @@ export default {
       handler: 'smartminds.receiveByClient',
       config: { auth: false },
     },
+    // Test SAPO API
+    {
+      method: 'GET',
+      path: '/test-sapo',
+      handler: 'smartminds.testSapo',
+      config: { auth: false },
+    },
+    // Test SAPO API
+    {
+      method: 'GET',
+      path: '/test-sapo',
+      handler: 'smartminds.testSapo',
+      config: { auth: false },
+    },
+    // Update SAPO credentials
+    {
+      method: 'POST',
+      path: '/update-sapo-credentials',
+      handler: 'smartminds.updateSapoCredentials',
+      config: { auth: false },
+    },
   ],
 };

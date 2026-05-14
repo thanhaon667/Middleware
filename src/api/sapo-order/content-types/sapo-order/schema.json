@@ -35,6 +35,10 @@
       "type": "json",
       "required": true
     },
+    "payloadChanges": {
+      "type": "json",
+      "description": "Track all payload key changes (added, modified, removed)"
+    },
     "orderStatus": {
       "type": "enumeration",
       "default": "new",

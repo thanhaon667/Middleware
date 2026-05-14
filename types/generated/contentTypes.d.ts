@@ -712,6 +712,7 @@ export interface ApiSapoOrderSapoOrder extends Struct.CollectionTypeSchema {
     > &
       Schema.Attribute.DefaultTo<'new'>;
     payload: Schema.Attribute.JSON & Schema.Attribute.Required;
+    payloadChanges: Schema.Attribute.JSON;
     platform: Schema.Attribute.Enumeration<['sapo']> &
       Schema.Attribute.DefaultTo<'sapo'>;
     processingLog: Schema.Attribute.JSON;
