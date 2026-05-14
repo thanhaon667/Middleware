@@ -4,7 +4,7 @@ const strapi = require('@strapi/strapi');
 async function test() {
   const app = await strapi({ autoReload: false }).start();
   const connections = await app.db.query('api::platform-connection.platform-connection').findMany({
-    where: { platform: 'MISA', isActive: true },
+    where: { platformType: 'MISA', isActive: true },
     populate: { client: true }
   });
   for (const conn of connections) {

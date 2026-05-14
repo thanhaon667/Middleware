@@ -1,7 +1,12 @@
 export default {
   async addToQueue(orderId: string, clientId: number) {
+    const order = await strapi.db.query('api::order.order').findOne({
+      where: { orderId, client: clientId }
+    });
+    if (!order) return;
+
     await strapi.db.query('api::order.order').update({
-      where: { orderId, client: clientId },
+      where: { id: order.id },
       data: { orderStatus: 'pending' }
     });
   },
@@ -14,7 +19,7 @@ export default {
     if (!order) return false;
 
     const smConnection = await strapi.db.query('api::platform-connection.platform-connection').findOne({
-      where: { client: clientId, platform: 'SM', isActive: true }
+      where: { client: clientId, platformType: 'SM', isActive: true }
     });
     if (!smConnection) {
       strapi.log.error(`No active SM connection for client ${clientId}`);

@@ -12,21 +12,18 @@ export default {
         break;
       }
 
-      const orderIds = orders.map((o: any) => o.sale_order_no);
-      const existingTop = await strapi.db.query('api::order.order').findMany({
-        select: ['orderId'],
-        where: { client: misaConnection.client.id },
-        orderBy: { orderId: 'desc' },
-        limit: 200
-      });
-      const existingIdSet = new Set(existingTop.map((e: any) => e.orderId));
+      for (const order of orders) {
+        const orderId = order.sale_order_no;
+        if (!orderId) continue;
 
-      const newOrders = orders.filter((o: any) => !existingIdSet.has(o.sale_order_no));
+        const existing = await strapi.db.query('api::order.order').findOne({
+          where: { orderId, client: misaConnection.client.id }
+        });
+        if (existing) continue;
 
-      for (const order of newOrders) {
         const newOrder = await strapi.db.query('api::order.order').create({
           data: {
-            orderId: order.sale_order_no,
+            orderId,
             payload: order,
             orderStatus: 'new',
             source: 'MISA',

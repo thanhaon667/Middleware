@@ -60,9 +60,9 @@
       "type": "relation",
       "relation": "oneToMany",
       "target": "api::order.order",
-      "mappedBy": "Client"
+      "mappedBy": "client"
     },
-    "Client": {
+    "integration_logs": {
       "type": "relation",
       "relation": "oneToMany",
       "target": "api::integration-log.integration-log",

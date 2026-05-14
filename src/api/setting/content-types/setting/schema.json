@@ -11,7 +11,7 @@
   },
   "pluginOptions": {},
   "attributes": {
-    "Key": {
+    "key": {
       "type": "string",
       "default": "misa_test_cron_enabled",
       "required": true

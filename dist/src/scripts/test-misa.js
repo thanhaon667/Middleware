@@ -89,12 +89,12 @@ async function writeStepLog(clientDocId, step, details, isError = false) {
         }
         await strapi.documents('api::integration-log.integration-log').create({
             data: {
-                Client: clientDocId,
+                client: clientDocId,
                 direction: 'incoming',
-                Endpoint: `MISA-Zeek - ${step}`,
+                endpoint: `MISA-Zeek - ${step}`,
                 requestBody: details.request || {},
                 responseBody: details.response || {},
-                logStatus: isError ? 'failed,' : 'success'
+                logStatus: (isError ? 'failed' : 'success')
             },
             status: 'published'
         });
@@ -279,7 +279,7 @@ async function upsertOrder(order, clientName, clientDocId) {
                 clientName,
                 payload: order,
                 orderStatus: 'new',
-                Client: clientDocId
+                client: clientDocId
             },
             status: 'published'
         });

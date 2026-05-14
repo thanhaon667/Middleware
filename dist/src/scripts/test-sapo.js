@@ -239,6 +239,16 @@ async function upsertSapoOrder(order, clientName, clientDocId) {
             orderName,
             clientName,
             payload: order,
+            payloadChanges: [
+                {
+                    timestamp: new Date().toISOString(),
+                    step: 'initial_fetch',
+                    message: 'Initial payload from SAPO cron sync',
+                    added: Object.keys(order),
+                    removed: [],
+                    modified: []
+                }
+            ],
             orderStatus: 'new',
             platform: 'sapo',
             processingLog: [

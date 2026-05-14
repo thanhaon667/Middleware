@@ -15,7 +15,7 @@
       "type": "relation",
       "relation": "manyToOne",
       "target": "api::client.client",
-      "inversedBy": "Client"
+      "inversedBy": "integration_logs"
     },
     "direction": {
       "type": "enumeration",
@@ -24,7 +24,7 @@
         "outgoing"
       ]
     },
-    "Endpoint": {
+    "endpoint": {
       "type": "string"
     },
     "requestBody": {
@@ -37,7 +37,7 @@
       "type": "enumeration",
       "enum": [
         "success",
-        "failed,",
+        "failed",
         "pending"
       ]
     },
