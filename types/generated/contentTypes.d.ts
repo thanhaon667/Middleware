@@ -569,6 +569,11 @@ export interface ApiIntegrationCredentialIntegrationCredential
     publishedAt: Schema.Attribute.DateTime;
     sapoApiKey: Schema.Attribute.String;
     sapoApiSecret: Schema.Attribute.String;
+    sapoLastOrderId: Schema.Attribute.String;
+    sapoLastOrderModifiedAt: Schema.Attribute.DateTime;
+    sapoLastPolledAt: Schema.Attribute.DateTime;
+    sapoPollSchedules: Schema.Attribute.String;
+    sapoPushTag: Schema.Attribute.String;
     sapoShopDomain: Schema.Attribute.String;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
@@ -799,6 +804,7 @@ export interface ApiSettingSetting extends Struct.CollectionTypeSchema {
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     value: Schema.Attribute.Boolean;
+    valueText: Schema.Attribute.Text;
   };
 }
 

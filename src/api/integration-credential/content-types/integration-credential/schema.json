@@ -50,6 +50,21 @@
     },
     "sapoShopDomain": {
       "type": "string"
+    },
+    "sapoPollSchedules": {
+      "type": "string"
+    },
+    "sapoLastPolledAt": {
+      "type": "datetime"
+    },
+    "sapoLastOrderModifiedAt": {
+      "type": "datetime"
+    },
+    "sapoLastOrderId": {
+      "type": "string"
+    },
+    "sapoPushTag": {
+      "type": "string"
     }
   }
 }

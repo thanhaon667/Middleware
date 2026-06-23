@@ -19,6 +19,9 @@
     "value": {
       "type": "boolean"
     },
+    "valueText": {
+      "type": "text"
+    },
     "description": {
       "type": "text"
     }

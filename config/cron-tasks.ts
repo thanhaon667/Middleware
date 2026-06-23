@@ -14,14 +14,9 @@ export default {
     }
   },
 
-  // Every 5 minutes: run SAPO sync when enabled.
-  '*/5 * * * *': async () => {
+  // Every minute: SAPO flow decides actual run time from Setting.
+  '* * * * *': async () => {
     try {
-      const setting = await strapi.db.query('api::setting.setting').findOne({
-        where: { key: 'sapo_test_cron_enabled' }
-      });
-      if (!setting || setting.value !== true) return;
-
       const { testSapo } = await import('../src/scripts/test-sapo');
       await testSapo();
     } catch (err) {
