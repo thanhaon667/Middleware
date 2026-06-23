@@ -608,6 +608,7 @@ export default {
             if (statusEnum === 'COMPLETED') newStatus = 'completed';
             else if (statusEnum === 'FAILED') newStatus = 'failed';
             else if (statusEnum === 'IN_DELIVERY' || statusEnum === 'PICKING_UP') newStatus = 'processing';
+            else if (statusEnum === 'PENDING') newStatus = 'new';
 
             await strapi.db.query('api::sapo-order.sapo-order').update({
               where: { id: order.id },
@@ -634,6 +635,7 @@ export default {
               if (statusEnum === 'COMPLETED') newStatus = 'completed';
               else if (statusEnum === 'FAILED') newStatus = 'failed';
               else if (statusEnum === 'IN_DELIVERY' || statusEnum === 'PICKING_UP') newStatus = 'processing';
+              else if (statusEnum === 'PENDING') newStatus = 'new';
 
               await strapi.db.query('api::sapo-order.sapo-order').update({
                 where: { id: sapoLocalOrder.id },
