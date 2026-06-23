@@ -733,7 +733,7 @@ export interface ApiSapoOrderSapoOrder extends Struct.CollectionTypeSchema {
     singularName: 'sapo-order';
   };
   options: {
-    draftAndPublish: true;
+    draftAndPublish: false;
   };
   pluginOptions: {
     'content-manager': {

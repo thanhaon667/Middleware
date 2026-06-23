@@ -300,8 +300,8 @@ function detectPayloadChanges(oldPayload, newPayload) {
     return changes;
 }
 async function appendSapoOrderLog(localOrderId, step, message, isError = false) {
-    const localOrder = await strapi.db.query('api::sapo-order.sapo-order').findOne({
-        where: { id: localOrderId },
+    const localOrder = await strapi.documents('api::sapo-order.sapo-order').findFirst({
+        filters: { id: localOrderId },
     });
     if (!localOrder)
         return;
@@ -312,8 +312,8 @@ async function appendSapoOrderLog(localOrderId, step, message, isError = false) 
         message,
         isError,
     });
-    await strapi.db.query('api::sapo-order.sapo-order').update({
-        where: { id: localOrderId },
+    await strapi.documents('api::sapo-order.sapo-order').update({
+        documentId: localOrder.documentId,
         data: {
             processingLog: currentLog.slice(-100),
         },
@@ -338,16 +338,16 @@ async function upsertSapoOrder(order, clientName) {
     const orderId = String(order.id || '');
     if (!orderId)
         return null;
-    const existing = await strapi.db.query('api::sapo-order.sapo-order').findOne({
-        where: { orderId, clientName },
+    const existing = await strapi.documents('api::sapo-order.sapo-order').findFirst({
+        filters: { orderId, clientName },
     });
     if (existing) {
         const payloadChanges = detectPayloadChanges(existing.payload || {}, order);
         const hasChanges = payloadChanges.added.length > 0 || payloadChanges.removed.length > 0 || payloadChanges.modified.length > 0;
         if (hasChanges) {
             const history = Array.isArray(existing.payloadChanges) ? existing.payloadChanges : [];
-            await strapi.db.query('api::sapo-order.sapo-order').update({
-                where: { id: existing.id },
+            await strapi.documents('api::sapo-order.sapo-order').update({
+                documentId: existing.documentId,
                 data: {
                     payload: order,
                     payloadChanges: [...history, payloadChanges],
@@ -355,13 +355,13 @@ async function upsertSapoOrder(order, clientName) {
             });
             await appendSapoOrderLog(existing.id, 'UPSERT', 'Payload updated from SAPO poll');
         }
-        return await strapi.db.query('api::sapo-order.sapo-order').findOne({
-            where: { id: existing.id },
+        return await strapi.documents('api::sapo-order.sapo-order').findFirst({
+            filters: { id: existing.id },
         });
     }
     const merchantOrderId = String(order.order_number || order.id).slice(-6);
     const orderName = order.name || `Order ${orderId}`;
-    const created = await strapi.db.query('api::sapo-order.sapo-order').create({
+    const created = await strapi.documents('api::sapo-order.sapo-order').create({
         data: {
             orderId,
             merchantOrderId,
@@ -388,6 +388,7 @@ async function upsertSapoOrder(order, clientName) {
                 },
             ],
         },
+        status: 'published',
     });
     return created;
 }
@@ -407,6 +408,18 @@ function calculateTotalWeight(lineItems) {
         totalKg += itemWeightKg * quantity;
     }
     return Number(totalKg.toFixed(3));
+}
+function normalizeSapoAddress(address) {
+    const parts = [
+        address === null || address === void 0 ? void 0 : address.address1,
+        address === null || address === void 0 ? void 0 : address.address2,
+        address === null || address === void 0 ? void 0 : address.ward,
+        address === null || address === void 0 ? void 0 : address.district,
+        (address === null || address === void 0 ? void 0 : address.province) || (address === null || address === void 0 ? void 0 : address.city),
+    ]
+        .map((item) => String(item || '').trim())
+        .filter(Boolean);
+    return parts.length > 0 ? Array.from(new Set(parts)).join(', ') : 'Dia chi mac dinh';
 }
 function buildSmartMindsPayload(localOrder) {
     const sapo = localOrder.payload || {};
@@ -448,7 +461,7 @@ function buildSmartMindsPayload(localOrder) {
                 user_phone: phone,
                 user_phone_country_code: '84',
                 user_location: '',
-                user_address: shippingAddress.address1 || shippingAddress.address2 || shippingAddress.address || 'Dia chi mac dinh',
+                user_address: normalizeSapoAddress(shippingAddress),
             },
             order_detail: {
                 total_price: totalPrice,
@@ -515,8 +528,8 @@ async function updateSapoOrderTag(sapoOrderId, tag) {
     });
 }
 async function markLocalOrderAsSent(localOrderId, zeekOrderId) {
-    const localOrder = await strapi.db.query('api::sapo-order.sapo-order').findOne({
-        where: { id: localOrderId },
+    const localOrder = await strapi.documents('api::sapo-order.sapo-order').findFirst({
+        filters: { id: localOrderId },
     });
     const currentLog = Array.isArray(localOrder === null || localOrder === void 0 ? void 0 : localOrder.processingLog) ? localOrder.processingLog : [];
     currentLog.push({
@@ -524,8 +537,8 @@ async function markLocalOrderAsSent(localOrderId, zeekOrderId) {
         step: 'SEND_TO_SMARTMINDS',
         message: `Order sent to Smart Minds, externalOrderId=${zeekOrderId}`,
     });
-    await strapi.db.query('api::sapo-order.sapo-order').update({
-        where: { id: localOrderId },
+    await strapi.documents('api::sapo-order.sapo-order').update({
+        documentId: localOrder.documentId,
         data: {
             orderStatus: 'sent',
             externalOrderId: zeekOrderId,
@@ -535,8 +548,8 @@ async function markLocalOrderAsSent(localOrderId, zeekOrderId) {
     });
 }
 async function markLocalOrderAsFailed(localOrderId, errorMessage) {
-    const localOrder = await strapi.db.query('api::sapo-order.sapo-order').findOne({
-        where: { id: localOrderId },
+    const localOrder = await strapi.documents('api::sapo-order.sapo-order').findFirst({
+        filters: { id: localOrderId },
     });
     const currentLog = Array.isArray(localOrder === null || localOrder === void 0 ? void 0 : localOrder.processingLog) ? localOrder.processingLog : [];
     currentLog.push({
@@ -545,8 +558,8 @@ async function markLocalOrderAsFailed(localOrderId, errorMessage) {
         message: errorMessage,
         isError: true,
     });
-    await strapi.db.query('api::sapo-order.sapo-order').update({
-        where: { id: localOrderId },
+    await strapi.documents('api::sapo-order.sapo-order').update({
+        documentId: localOrder.documentId,
         data: {
             orderStatus: 'failed',
             processingLog: currentLog.slice(-100),
@@ -555,8 +568,8 @@ async function markLocalOrderAsFailed(localOrderId, errorMessage) {
 }
 async function processPendingOrdersForClient(clientName) {
     var _a;
-    const pendingOrders = await strapi.db.query('api::sapo-order.sapo-order').findMany({
-        where: {
+    const pendingOrders = await strapi.documents('api::sapo-order.sapo-order').findMany({
+        filters: {
             clientName,
             orderStatus: { $in: ['new', 'failed'] },
         },
