@@ -21,11 +21,11 @@ export default {
       handler: 'smartminds.testSapo',
       config: { auth: false },
     },
-    // Test SAPO API
+    // Test SAPO direct connection for Postman
     {
       method: 'GET',
-      path: '/test-sapo',
-      handler: 'smartminds.testSapo',
+      path: '/test-sapo-connection/:clientName',
+      handler: 'smartminds.testSapoConnection',
       config: { auth: false },
     },
     // Update SAPO credentials

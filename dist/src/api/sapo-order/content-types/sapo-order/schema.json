@@ -45,9 +45,13 @@
             "enum": [
                 "new",
                 "sent",
+                "processing",
                 "completed",
                 "failed"
             ]
+        },
+        "zeekStatus": {
+            "type": "string"
         },
         "externalOrderId": {
             "type": "string"

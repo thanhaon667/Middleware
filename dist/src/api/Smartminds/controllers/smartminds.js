@@ -73,6 +73,14 @@ async function getCredentialByClientName(clientName) {
     console.log(`[CREDENTIAL] Tìm thấy credential cho client: ${cred.clientName}`);
     return cred;
 }
+function normalizeSapoShopDomain(domain) {
+    return String(domain || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+}
+function buildSapoPrivateAppUrl(sapoCred, path) {
+    const shopDomain = normalizeSapoShopDomain(sapoCred === null || sapoCred === void 0 ? void 0 : sapoCred.sapoShopDomain);
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    return `https://${encodeURIComponent(String((sapoCred === null || sapoCred === void 0 ? void 0 : sapoCred.sapoApiKey) || ''))}:${encodeURIComponent(String((sapoCred === null || sapoCred === void 0 ? void 0 : sapoCred.sapoApiSecret) || ''))}@${shopDomain}${normalizedPath}`;
+}
 /**
  * Helper: ghi log vào processingLog của order
  */
@@ -113,6 +121,45 @@ async function addOrderLog(orderId, step, message, isError = false) {
     }
     catch (err) {
         console.error(`[ORDER LOG] Lỗi khi ghi log cho order ${orderId}:`, err);
+    }
+}
+async function addSapoOrderLogById(localId, step, message, isError = false) {
+    try {
+        console.log(`[SAPO ORDER LOG] ${step} - localId=${localId}: ${message} ${isError ? '(ERROR)' : ''}`);
+        const order = await strapi.db.query('api::sapo-order.sapo-order').findOne({
+            where: { id: localId }
+        });
+        if (!order) {
+            console.warn(`[SAPO ORDER LOG] sapo-order ${localId} not found, không thể ghi log`);
+            return;
+        }
+        let logs = order.processingLog;
+        if (typeof logs === 'string') {
+            try {
+                logs = JSON.parse(logs);
+            }
+            catch {
+                logs = [];
+            }
+        }
+        if (!Array.isArray(logs))
+            logs = [];
+        logs.push({
+            timestamp: new Date().toISOString(),
+            step,
+            message,
+            isError
+        });
+        if (logs.length > 100)
+            logs = logs.slice(-100);
+        await strapi.db.query('api::sapo-order.sapo-order').update({
+            where: { id: order.id },
+            data: { processingLog: logs }
+        });
+        console.log(`[SAPO ORDER LOG] Đã ghi log thành công cho sapo-order ${localId}`);
+    }
+    catch (err) {
+        console.error(`[SAPO ORDER LOG] Lỗi khi ghi log cho sapo-order ${localId}:`, err);
     }
 }
 /**
@@ -217,7 +264,7 @@ async function getSapoCredentialForClient(clientName) {
     const cred = await strapi.db.query('api::integration-credential.integration-credential').findOne({
         where: { clientName, isActive: true }
     });
-    if (!cred || !cred.sapoApiKey || !cred.sapoShopDomain) {
+    if (!cred || !cred.sapoApiKey || !cred.sapoApiSecret || !cred.sapoShopDomain) {
         throw new Error(`SAPO credential missing for client ${clientName}`);
     }
     console.log(`[SAPO CRED] Found: shop=${cred.sapoShopDomain}`);
@@ -227,13 +274,12 @@ async function getSapoCredentialForClient(clientName) {
  * Cập nhật tags trên SAPO order
  */
 async function updateSapoOrderTags(sapoOrderId, sapoCred, newTag) {
-    const baseUrl = `https://${sapoCred.sapoApiKey}:${sapoCred.sapoApiSecret}@${sapoCred.sapoShopDomain}`;
+    const orderUrl = buildSapoPrivateAppUrl(sapoCred, `/admin/orders/${sapoOrderId}.json`);
     // 1. Lấy tags hiện tại
     let currentTags = '';
     try {
         console.log(`[SAPO TAGS] GET current tags for order ${sapoOrderId}`);
-        const getUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
-        const getResp = await axios_1.default.get(getUrl, { headers: { 'Content-Type': 'application/json' } });
+        const getResp = await axios_1.default.get(orderUrl, { headers: { 'Content-Type': 'application/json' } });
         currentTags = getResp.data.order.tags || '';
         console.log(`[SAPO TAGS] Current tags: "${currentTags}"`);
     }
@@ -246,11 +292,10 @@ async function updateSapoOrderTags(sapoOrderId, sapoCred, newTag) {
     const updatedTags = tagsArray.join(',');
     console.log(`[SAPO TAGS] New tags: "${updatedTags}"`);
     // 3. Cập nhật tags
-    const putUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
     const payload = { order: { id: sapoOrderId, tags: updatedTags } };
-    console.log(`[SAPO TAGS] PUT request to ${putUrl}`);
+    console.log(`[SAPO TAGS] PUT request to https://${normalizeSapoShopDomain(sapoCred.sapoShopDomain)}/admin/orders/${sapoOrderId}.json via private app`);
     console.log(`[SAPO TAGS] PUT body: ${JSON.stringify(payload, null, 2)}`);
-    const putResp = await axios_1.default.put(putUrl, payload, {
+    const putResp = await axios_1.default.put(orderUrl, payload, {
         headers: { 'Content-Type': 'application/json' }
     });
     console.log(`[SAPO TAGS] Response status: ${putResp.status}`);
@@ -572,7 +617,12 @@ exports.default = {
             }
             console.log(`[WEBHOOK] Detected platform: ${platform}`);
             // Ghi log nhận webhook (sau khi đã có orderId)
-            await addOrderLog(merchantOrderID, 'WEBHOOK_RECEIVED', `Client ${clientName}: status=${orderStatusCode}, mapped=${statusEnum}`);
+            if (platform === 'sapo') {
+                await addSapoOrderLogById(order.id, 'WEBHOOK_RECEIVED', `Client ${clientName}: status=${orderStatusCode}, mapped=${statusEnum}`);
+            }
+            else {
+                await addOrderLog(merchantOrderID, 'WEBHOOK_RECEIVED', `Client ${clientName}: status=${orderStatusCode}, mapped=${statusEnum}`);
+            }
             // ==================== XỬ LÝ RIÊNG CHO SAPO (cập nhật tags) ====================
             if (platform === 'sapo') {
                 console.log(`[SAPO] Processing Zeek callback for SAPO order ${order.orderId}`);
@@ -607,18 +657,21 @@ exports.default = {
                             newStatus = 'processing';
                         else if (statusEnum === 'PENDING')
                             newStatus = 'new';
+                        const currentLog = Array.isArray(order.processingLog) ? order.processingLog : [];
                         await strapi.db.query('api::sapo-order.sapo-order').update({
                             where: { id: order.id },
                             data: {
                                 orderStatus: newStatus,
                                 zeekStatus: statusEnum,
-                                processingLog: {
-                                    push: {
+                                processingLog: [
+                                    ...currentLog,
+                                    {
                                         timestamp: new Date().toISOString(),
                                         step: 'zeek_callback',
-                                        message: `Zeek status ${statusEnum} -> tag ${newTag}`
+                                        message: `Zeek status ${statusEnum} -> tag ${newTag}`,
+                                        isError: false
                                     }
-                                }
+                                ]
                             }
                         });
                         console.log(`[SAPO] Local sapo-order updated (id=${order.id})`);
@@ -638,18 +691,21 @@ exports.default = {
                                 newStatus = 'processing';
                             else if (statusEnum === 'PENDING')
                                 newStatus = 'new';
+                            const currentLog = Array.isArray(sapoLocalOrder.processingLog) ? sapoLocalOrder.processingLog : [];
                             await strapi.db.query('api::sapo-order.sapo-order').update({
                                 where: { id: sapoLocalOrder.id },
                                 data: {
                                     orderStatus: newStatus,
                                     zeekStatus: statusEnum,
-                                    processingLog: {
-                                        push: {
+                                    processingLog: [
+                                        ...currentLog,
+                                        {
                                             timestamp: new Date().toISOString(),
                                             step: 'zeek_callback',
-                                            message: `Zeek status ${statusEnum} -> tag ${newTag}`
+                                            message: `Zeek status ${statusEnum} -> tag ${newTag}`,
+                                            isError: false
                                         }
-                                    }
+                                    ]
                                 }
                             });
                             console.log(`[SAPO] Local sapo-order updated (id=${sapoLocalOrder.id})`);
@@ -858,6 +914,69 @@ exports.default = {
             console.error('[TEST SAPO] ❌ Error:', error);
             ctx.status = 500;
             ctx.body = { success: false, error: error.message };
+        }
+    },
+    async testSapoConnection(ctx) {
+        var _a, _b, _c, _d, _e, _f;
+        const clientName = String(((_a = ctx.params) === null || _a === void 0 ? void 0 : _a.clientName) || '').trim();
+        const limit = Math.max(1, Math.min(Number(((_b = ctx.query) === null || _b === void 0 ? void 0 : _b.limit) || 1) || 1, 10));
+        console.log(`\n========== TEST SAPO CONNECTION: ${clientName || 'UNKNOWN'} ==========`);
+        if (!clientName) {
+            ctx.status = 400;
+            ctx.body = { success: false, error: 'clientName is required' };
+            return;
+        }
+        try {
+            const cred = await getCredentialByClientName(clientName);
+            const shopDomain = normalizeSapoShopDomain(cred.sapoShopDomain);
+            const url = buildSapoPrivateAppUrl(cred, '/admin/orders.json');
+            const response = await axios_1.default.get(url, {
+                params: {
+                    limit,
+                    page: 1,
+                },
+                timeout: 20000,
+                validateStatus: () => true,
+            });
+            const orders = Array.isArray((_c = response.data) === null || _c === void 0 ? void 0 : _c.orders)
+                ? response.data.orders
+                : Array.isArray((_d = response.data) === null || _d === void 0 ? void 0 : _d.data)
+                    ? response.data.data
+                    : [];
+            ctx.status = 200;
+            ctx.body = {
+                success: response.status >= 200 && response.status < 300,
+                clientName,
+                shopDomain,
+                url: `https://${shopDomain}/admin/orders.json`,
+                authMode: 'private-app-url',
+                status: response.status,
+                orderCount: orders.length,
+                sampleOrders: orders.slice(0, limit).map((order) => ({
+                    id: order.id,
+                    name: order.name,
+                    order_number: order.order_number,
+                    created_on: order.created_on,
+                    modified_on: order.modified_on || order.updated_on,
+                    total_price: order.total_price,
+                    financial_status: order.financial_status,
+                    fulfillment_status: order.fulfillment_status,
+                })),
+                rawKeys: Object.keys(response.data || {}),
+            };
+        }
+        catch (error) {
+            console.error(`[TEST SAPO CONNECTION] Error for ${clientName}:`, error);
+            ctx.status = 500;
+            ctx.body = {
+                success: false,
+                clientName,
+                error: error.message || '',
+                name: error.name || null,
+                code: error.code || null,
+                status: ((_e = error.response) === null || _e === void 0 ? void 0 : _e.status) || null,
+                response: ((_f = error.response) === null || _f === void 0 ? void 0 : _f.data) || null,
+            };
         }
     },
     // Update SAPO credentials for TestSa

@@ -63,7 +63,37 @@ let SAPO_PUSH_TAG = 'SmartMinds:da_day_sang_zeek';
 
 const SAPO_TIMEZONE_OFFSET_MS = 7 * 60 * 60 * 1000;
 const SAPO_PAGE_LIMIT = 250;
+const SAPO_MAX_PAGES_PER_RUN = 2;
 const SAPO_WATERMARK_OVERLAP_MINUTES = 2;
+
+function maskSecret(value: string | null | undefined) {
+  const raw = String(value || '');
+  if (!raw) return '';
+  if (raw.length <= 8) return '***';
+  return `${raw.slice(0, 4)}...${raw.slice(-4)}`;
+}
+
+function logDivider(title: string) {
+  console.log(`\n========== ${title} ==========`);
+}
+
+function logJson(label: string, data: any) {
+  console.log(`[SAPO] ${label}:`);
+  console.log(JSON.stringify(data, null, 2));
+}
+
+function summarizeOrder(order: any) {
+  return {
+    id: order?.id,
+    name: order?.name,
+    order_number: order?.order_number,
+    created_on: order?.created_on || order?.created_at || null,
+    modified_on: order?.modified_on || order?.updated_on || null,
+    total_price: order?.total_price ?? null,
+    financial_status: order?.financial_status ?? null,
+    fulfillment_status: order?.fulfillment_status ?? null,
+  };
+}
 
 function isCredentialActive(value: string | boolean | undefined) {
   if (value === true) return true;
@@ -104,6 +134,18 @@ function getCurrentUtc7MinuteMarker(date: Date) {
 
 function normalizeShopDomain(domain: string) {
   return domain.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+}
+
+function buildSapoPrivateAppUrl(path: string) {
+  const shopDomain = normalizeShopDomain(SAPO_SHOP_DOMAIN);
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `https://${encodeURIComponent(SAPO_API_KEY)}:${encodeURIComponent(SAPO_API_SECRET)}@${shopDomain}${normalizedPath}`;
+}
+
+function buildMaskedSapoPrivateAppUrl(path: string) {
+  const shopDomain = normalizeShopDomain(SAPO_SHOP_DOMAIN);
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `https://${maskSecret(SAPO_API_KEY)}:${maskSecret(SAPO_API_SECRET)}@${shopDomain}${normalizedPath}`;
 }
 
 function getUtc7DateParts(date: Date) {
@@ -294,6 +336,14 @@ async function getActiveCredentials(): Promise<IntegrationCredential[]> {
     dedupedCredentials.push(cred);
   }
 
+  logJson('Active SAPO credentials', dedupedCredentials.map((cred) => ({
+    id: cred.id,
+    clientName: cred.clientName,
+    shopDomain: cred.sapoShopDomain,
+    isActive: cred.isActive,
+    hasZeek: Boolean(cred.zeekApiUrl && cred.zeekAppId && cred.zeekAppSecret),
+  })));
+
   return dedupedCredentials;
 }
 
@@ -307,6 +357,19 @@ function loadCredential(cred: IntegrationCredential) {
   ZEEK_APP_SECRET = cred.zeekAppSecret || '';
   CLIENT_MERCHANT_ID = cred.clientMerchantId || CURRENT_CLIENT_NAME;
   SAPO_PUSH_TAG = cred.sapoPushTag?.trim() || 'SmartMinds:da_day_sang_zeek';
+
+  logDivider(`LOAD CREDENTIAL ${CURRENT_CLIENT_NAME}`);
+  logJson('Credential summary', {
+    clientName: CURRENT_CLIENT_NAME,
+    shopDomain: SAPO_SHOP_DOMAIN,
+    sapoApiKey: maskSecret(SAPO_API_KEY),
+    sapoApiSecret: maskSecret(SAPO_API_SECRET),
+    zeekApiUrl: ZEEK_API_URL,
+    zeekAppId: ZEEK_APP_ID,
+    zeekAppSecret: maskSecret(ZEEK_APP_SECRET),
+    clientMerchantId: CLIENT_MERCHANT_ID,
+    sapoPushTag: SAPO_PUSH_TAG,
+  });
 
   if (!SAPO_API_KEY || !SAPO_API_SECRET || !SAPO_SHOP_DOMAIN) {
     throw new Error(`SAPO credential incomplete for ${CURRENT_CLIENT_NAME}`);
@@ -324,28 +387,37 @@ async function saveCredentialPollState(credentialId: number, data: Partial<Integ
   });
 }
 
-async function fetchSapoOrdersPage(modifiedSince: string, page = 1, limit = SAPO_PAGE_LIMIT) {
-  const url = `https://${SAPO_SHOP_DOMAIN}/admin/orders.json`;
+async function fetchSapoOrdersPage(page = 1, limit = SAPO_PAGE_LIMIT) {
+  const url = buildSapoPrivateAppUrl('/admin/orders.json');
   const params = {
     limit,
     page,
-    modified_on_min: modifiedSince,
-    status: 'any',
-    financial_status: 'any',
-    fulfillment_status: 'any',
     fields: 'id,name,order_number,created_on,updated_on,total_price,financial_status,fulfillment_status,tags,shipping_address,billing_address,line_items,note',
   };
 
+  logDivider(`FETCH SAPO PAGE ${page}`);
+  logJson('SAPO request', {
+    clientName: CURRENT_CLIENT_NAME,
+    url: buildMaskedSapoPrivateAppUrl('/admin/orders.json'),
+    params,
+    authMode: 'private-app-url',
+  });
+
   const response = await axios.get(url, {
-    auth: {
-      username: SAPO_API_KEY,
-      password: SAPO_API_SECRET,
-    },
     params,
     timeout: 20000,
   });
 
   const data = response.data || {};
+  const orders = Array.isArray(data.orders) ? data.orders : Array.isArray(data.data) ? data.data : [];
+  logJson('SAPO response summary', {
+    clientName: CURRENT_CLIENT_NAME,
+    status: response.status,
+    keys: Object.keys(data || {}),
+    orderCount: orders.length,
+    sampleOrders: orders.slice(0, 3).map((order: any) => summarizeOrder(order)),
+  });
+
   if (Array.isArray(data.orders)) return data.orders;
   if (Array.isArray(data.data)) return data.data;
   return [];
@@ -426,6 +498,11 @@ async function upsertSapoOrder(order: any, clientName: string) {
   const orderId = String(order.id || '');
   if (!orderId) return null;
 
+  logJson('UPSERT incoming order', {
+    clientName,
+    order: summarizeOrder(order),
+  });
+
   const existing = await strapi.documents('api::sapo-order.sapo-order').findFirst({
     filters: { orderId, clientName },
   });
@@ -444,6 +521,16 @@ async function upsertSapoOrder(order: any, clientName: string) {
         },
       });
       await appendSapoOrderLog(existing.id, 'UPSERT', 'Payload updated from SAPO poll');
+      logJson('UPSERT updated existing order', {
+        localId: existing.id,
+        documentId: existing.documentId,
+        orderId,
+        changedKeys: {
+          added: payloadChanges.added,
+          removed: payloadChanges.removed,
+          modified: payloadChanges.modified.map((item) => item.key),
+        },
+      });
     }
 
     return await strapi.documents('api::sapo-order.sapo-order').findFirst({
@@ -482,6 +569,13 @@ async function upsertSapoOrder(order: any, clientName: string) {
       ],
     },
     status: 'published',
+  });
+
+  logJson('UPSERT created new order', {
+    localId: created.id,
+    documentId: created.documentId,
+    clientName,
+    order: summarizeOrder(order),
   });
 
   return created;
@@ -574,6 +668,17 @@ function buildSmartMindsPayload(localOrder: SapoOrderRecord) {
 
 async function sendToSmartMinds(localOrder: SapoOrderRecord): Promise<SmartMindsResult> {
   const payload = buildSmartMindsPayload(localOrder);
+  logDivider(`SEND TO SMART MINDS ${localOrder.orderId}`);
+  logJson('Smart Minds request', {
+    clientName: localOrder.clientName,
+    orderId: localOrder.orderId,
+    url: ZEEK_API_URL,
+    headers: {
+      AppID: ZEEK_APP_ID,
+      AppSecret: maskSecret(ZEEK_APP_SECRET),
+    },
+    payload,
+  });
   const response = await axios.post(ZEEK_API_URL, payload, {
     headers: {
       'Content-Type': 'application/json',
@@ -581,6 +686,13 @@ async function sendToSmartMinds(localOrder: SapoOrderRecord): Promise<SmartMinds
       AppSecret: ZEEK_APP_SECRET,
     },
     timeout: 20000,
+  });
+
+  logJson('Smart Minds response', {
+    clientName: localOrder.clientName,
+    orderId: localOrder.orderId,
+    status: response.status,
+    data: response.data,
   });
 
   if (response.data?.error !== 0) {
@@ -599,18 +711,20 @@ async function sendToSmartMinds(localOrder: SapoOrderRecord): Promise<SmartMinds
 }
 
 async function updateSapoOrderTag(sapoOrderId: string, tag: string) {
-  const orderUrl = `https://${SAPO_SHOP_DOMAIN}/admin/orders/${sapoOrderId}.json`;
+  const orderUrl = buildSapoPrivateAppUrl(`/admin/orders/${sapoOrderId}.json`);
+  logDivider(`UPDATE SAPO TAG ${sapoOrderId}`);
 
   let currentTags = '';
   try {
     const current = await axios.get(orderUrl, {
-      auth: {
-        username: SAPO_API_KEY,
-        password: SAPO_API_SECRET,
-      },
       timeout: 15000,
     });
     currentTags = current.data?.order?.tags || '';
+    logJson('Current SAPO tags', {
+      sapoOrderId,
+      status: current.status,
+      currentTags,
+    });
   } catch (error: any) {
     console.warn(`[SAPO] Cannot load current tags for order ${sapoOrderId}: ${error.message}`);
   }
@@ -622,21 +736,28 @@ async function updateSapoOrderTag(sapoOrderId: string, tag: string) {
 
   tagsArray.push(tag);
   const uniqueTags = Array.from(new Set(tagsArray));
+  logJson('SAPO tag update request', {
+    sapoOrderId,
+    orderUrl: buildMaskedSapoPrivateAppUrl(`/admin/orders/${sapoOrderId}.json`),
+    finalTags: uniqueTags,
+  });
 
-  await axios.put(
+  const response = await axios.put(
     orderUrl,
     { order: { id: Number(sapoOrderId), tags: uniqueTags.join(',') } },
     {
-      auth: {
-        username: SAPO_API_KEY,
-        password: SAPO_API_SECRET,
-      },
       headers: {
         'Content-Type': 'application/json',
       },
       timeout: 15000,
     }
   );
+
+  logJson('SAPO tag update response', {
+    sapoOrderId,
+    status: response.status,
+    data: response.data,
+  });
 }
 
 async function markLocalOrderAsSent(localOrderId: number, zeekOrderId: string) {
@@ -691,6 +812,17 @@ async function processPendingOrdersForClient(clientName: string) {
   });
 
   let sentCount = 0;
+  logJson('Pending SAPO orders for Smart Minds', {
+    clientName,
+    count: pendingOrders.length,
+    orders: pendingOrders.map((order: SapoOrderRecord) => ({
+      id: order.id,
+      orderId: order.orderId,
+      orderName: order.orderName,
+      orderStatus: order.orderStatus,
+      externalOrderId: order.externalOrderId,
+    })),
+  });
 
   for (const pendingOrder of pendingOrders as SapoOrderRecord[]) {
     try {
@@ -715,13 +847,16 @@ async function syncSapoOrdersForCredential(cred: IntegrationCredential) {
   }
 
   const now = new Date();
+  logDivider(`START CLIENT ${cred.clientName || 'UnknownClient'}`);
   loadCredential(cred);
   await getOrCreateClient(cred);
 
   const fetchWatermark = buildWatermarkFromCredential(cred);
-  const modifiedSince = formatSapoDate(fetchWatermark.modifiedAt || getStartOfUtc7Day(now));
-
-  console.log(`[SAPO] Watermark from ${modifiedSince}, lastOrderId=${fetchWatermark.orderId || 'none'}`);
+  console.log(
+    `[SAPO] Compare mode: latest ${SAPO_MAX_PAGES_PER_RUN} page(s), local watermark=${formatSapoDate(
+      fetchWatermark.modifiedAt || getStartOfUtc7Day(now)
+    )}, lastOrderId=${fetchWatermark.orderId || 'none'}`
+  );
 
   let page = 1;
   let fetchedCount = 0;
@@ -732,19 +867,31 @@ async function syncSapoOrdersForCredential(cred: IntegrationCredential) {
   };
 
   while (true) {
-    const pageOrders = await fetchSapoOrdersPage(modifiedSince, page, SAPO_PAGE_LIMIT);
+    if (page > SAPO_MAX_PAGES_PER_RUN) {
+      console.log(
+        `[SAPO] Stop paging at page ${page - 1}: reached max ${SAPO_MAX_PAGES_PER_RUN} page(s) per run`
+      );
+      break;
+    }
+
+    const pageOrders = await fetchSapoOrdersPage(page, SAPO_PAGE_LIMIT);
     if (!pageOrders.length) break;
 
-    const incrementalOrders = pageOrders
-      .filter((order: any) => compareWatermark(order, fetchWatermark))
-      .sort((a: any, b: any) => {
-        const aDate = parseSapoOrderTimestamp(a)?.getTime() || 0;
-        const bDate = parseSapoOrderTimestamp(b)?.getTime() || 0;
-        if (aDate !== bDate) return aDate - bDate;
-        return String(a.id || '').localeCompare(String(b.id || ''));
-      });
+    const incrementalOrders = [...pageOrders].sort((a: any, b: any) => {
+      const aDate = parseSapoOrderTimestamp(a)?.getTime() || 0;
+      const bDate = parseSapoOrderTimestamp(b)?.getTime() || 0;
+      if (aDate !== bDate) return aDate - bDate;
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    });
 
     fetchedCount += pageOrders.length;
+    logJson('Compare SAPO orders', {
+      clientName: CURRENT_CLIENT_NAME,
+      page,
+      fetchedPageCount: pageOrders.length,
+      compareCount: incrementalOrders.length,
+      compareSample: incrementalOrders.slice(0, 5).map((order: any) => summarizeOrder(order)),
+    });
 
     for (const order of incrementalOrders) {
       const localOrder = await upsertSapoOrder(order, CURRENT_CLIENT_NAME);
@@ -780,15 +927,27 @@ async function syncSapoOrdersForCredential(cred: IntegrationCredential) {
     sapoLastOrderId: newestProcessed.orderId || cred.sapoLastOrderId || null,
   });
 
+  logJson('Updated SAPO poll watermark', {
+    clientName: CURRENT_CLIENT_NAME,
+    sapoLastPolledAt: now.toISOString(),
+    sapoLastOrderModifiedAt: newestProcessed.modifiedAt ? newestProcessed.modifiedAt.toISOString() : cred.sapoLastOrderModifiedAt || null,
+    sapoLastOrderId: newestProcessed.orderId || cred.sapoLastOrderId || null,
+  });
+
   console.log(`[SAPO] Done ${CURRENT_CLIENT_NAME}: fetched=${fetchedCount}, upserted=${upsertedCount}, sent=${sentCount}`);
 }
 
 export async function testSapo() {
-  console.log('[SAPO] Start polling flow for all active SAPO credentials');
+  logDivider('SAPO POLLING FLOW START');
 
   const now = new Date();
   const scheduleConfig = await getSapoScheduleConfig();
+  logJson('SAPO schedule config', scheduleConfig);
   const scheduleDecision = shouldRunByGlobalSchedule(scheduleConfig, now);
+  logJson('SAPO schedule decision', {
+    now: now.toISOString(),
+    ...scheduleDecision,
+  });
   if (!scheduleDecision.shouldRun) {
     console.log(`[SAPO] Skip flow: ${scheduleDecision.reason}`);
     return;
@@ -813,5 +972,5 @@ export async function testSapo() {
 
   await setSapoLastRunMarker(getCurrentUtc7MinuteMarker(now));
 
-  console.log('[SAPO] Polling flow completed');
+  logDivider('SAPO POLLING FLOW COMPLETED');
 }

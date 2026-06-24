@@ -4,6 +4,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const axios_1 = __importDefault(require("axios"));
+function normalizeSapoShopDomain(domain) {
+    return String(domain || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+}
+function buildSapoPrivateAppUrl(cred, path) {
+    const shopDomain = normalizeSapoShopDomain(cred === null || cred === void 0 ? void 0 : cred.sapoShopDomain);
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    return `https://${encodeURIComponent(String((cred === null || cred === void 0 ? void 0 : cred.sapoApiKey) || ''))}:${encodeURIComponent(String((cred === null || cred === void 0 ? void 0 : cred.sapoApiSecret) || ''))}@${shopDomain}${normalizedPath}`;
+}
 // Helper lấy credential SAPO (có chứa cả thông tin Zeek)
 async function getSapoCredential(clientName) {
     const normalizedName = clientName === null || clientName === void 0 ? void 0 : clientName.trim();
@@ -107,11 +115,10 @@ async function sendToZeek(payload, cred) {
 }
 async function updateSapoOrderTag(sapoOrderId, cred, newTag) {
     var _a;
-    const baseUrl = `https://${cred.sapoApiKey}:${cred.sapoApiSecret}@${cred.sapoShopDomain}`;
-    const getUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
+    const orderUrl = buildSapoPrivateAppUrl(cred, `/admin/orders/${sapoOrderId}.json`);
     let currentTags = '';
     try {
-        const getResp = await axios_1.default.get(getUrl, {
+        const getResp = await axios_1.default.get(orderUrl, {
             headers: { 'Content-Type': 'application/json' },
         });
         currentTags = ((_a = getResp.data.order) === null || _a === void 0 ? void 0 : _a.tags) || '';
@@ -126,11 +133,10 @@ async function updateSapoOrderTag(sapoOrderId, cred, newTag) {
         .filter((t) => t && !t.startsWith('Smart Minds') && !t.startsWith('SmartMinds:') && !t.startsWith('SmartMinds'));
     tagsArray.push(newTag);
     const updatedTags = tagsArray.join(',');
-    const putUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
     const payload = { order: { id: sapoOrderId, tags: updatedTags } };
-    console.log(`[SAPO TAG] PUT ${putUrl}`);
+    console.log(`[SAPO TAG] PUT https://${normalizeSapoShopDomain(cred.sapoShopDomain)}/admin/orders/${sapoOrderId}.json via private app`);
     console.log(`[SAPO TAG] Body: ${JSON.stringify(payload, null, 2)}`);
-    const putResp = await axios_1.default.put(putUrl, payload, {
+    const putResp = await axios_1.default.put(orderUrl, payload, {
         headers: { 'Content-Type': 'application/json' },
     });
     console.log(`[SAPO TAG] Update response: ${JSON.stringify(putResp.data, null, 2)}`);

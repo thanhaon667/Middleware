@@ -759,7 +759,7 @@ export interface ApiSapoOrderSapoOrder extends Struct.CollectionTypeSchema {
     orderId: Schema.Attribute.String;
     orderName: Schema.Attribute.String;
     orderStatus: Schema.Attribute.Enumeration<
-      ['new', 'sent', 'completed', 'failed']
+      ['new', 'sent', 'processing', 'completed', 'failed']
     > &
       Schema.Attribute.DefaultTo<'new'>;
     payload: Schema.Attribute.JSON & Schema.Attribute.Required;
@@ -772,6 +772,7 @@ export interface ApiSapoOrderSapoOrder extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    zeekStatus: Schema.Attribute.String;
   };
 }
 

@@ -1,5 +1,15 @@
 import axios from 'axios';
 
+function normalizeSapoShopDomain(domain: string) {
+  return String(domain || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+}
+
+function buildSapoPrivateAppUrl(cred: any, path: string) {
+  const shopDomain = normalizeSapoShopDomain(cred?.sapoShopDomain);
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `https://${encodeURIComponent(String(cred?.sapoApiKey || ''))}:${encodeURIComponent(String(cred?.sapoApiSecret || ''))}@${shopDomain}${normalizedPath}`;
+}
+
 // Helper lấy credential SAPO (có chứa cả thông tin Zeek)
 async function getSapoCredential(clientName: string) {
   const normalizedName = clientName?.trim();
@@ -102,12 +112,11 @@ async function sendToZeek(payload: any, cred: any): Promise<string> {
 }
 
 async function updateSapoOrderTag(sapoOrderId: number | string, cred: any, newTag: string) {
-  const baseUrl = `https://${cred.sapoApiKey}:${cred.sapoApiSecret}@${cred.sapoShopDomain}`;
-  const getUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
+  const orderUrl = buildSapoPrivateAppUrl(cred, `/admin/orders/${sapoOrderId}.json`);
   let currentTags = '';
 
   try {
-    const getResp = await axios.get(getUrl, {
+    const getResp = await axios.get(orderUrl, {
       headers: { 'Content-Type': 'application/json' },
     });
     currentTags = getResp.data.order?.tags || '';
@@ -126,12 +135,11 @@ async function updateSapoOrderTag(sapoOrderId: number | string, cred: any, newTa
   tagsArray.push(newTag);
   const updatedTags = tagsArray.join(',');
 
-  const putUrl = `${baseUrl}/admin/orders/${sapoOrderId}.json`;
   const payload = { order: { id: sapoOrderId, tags: updatedTags } };
-  console.log(`[SAPO TAG] PUT ${putUrl}`);
+  console.log(`[SAPO TAG] PUT https://${normalizeSapoShopDomain(cred.sapoShopDomain)}/admin/orders/${sapoOrderId}.json via private app`);
   console.log(`[SAPO TAG] Body: ${JSON.stringify(payload, null, 2)}`);
 
-  const putResp = await axios.put(putUrl, payload, {
+  const putResp = await axios.put(orderUrl, payload, {
     headers: { 'Content-Type': 'application/json' },
   });
   console.log(`[SAPO TAG] Update response: ${JSON.stringify(putResp.data, null, 2)}`);
