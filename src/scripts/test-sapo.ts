@@ -88,7 +88,7 @@ function summarizeOrder(order: any) {
     name: order?.name,
     order_number: order?.order_number,
     created_on: order?.created_on || order?.created_at || null,
-    modified_on: order?.modified_on || order?.updated_on || null,
+    modified_on: order?.modified_on || order?.updated_on || order?.updated_at || null,
     total_price: order?.total_price ?? null,
     financial_status: order?.financial_status ?? null,
     fulfillment_status: order?.fulfillment_status ?? null,
@@ -176,7 +176,8 @@ function getStartOfUtc7Day(date: Date) {
 }
 
 function parseSapoOrderTimestamp(order: any) {
-  const raw = order?.updated_on || order?.updated_at || order?.created_on || order?.created_at;
+  // SAPO dùng modified_on (không phải updated_on)
+  const raw = order?.modified_on || order?.updated_on || order?.updated_at || order?.created_on || order?.created_at;
   if (!raw) return null;
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
@@ -387,13 +388,17 @@ async function saveCredentialPollState(credentialId: number, data: Partial<Integ
   });
 }
 
-async function fetchSapoOrdersPage(page = 1, limit = SAPO_PAGE_LIMIT) {
+async function fetchSapoOrdersPage(page = 1, limit = SAPO_PAGE_LIMIT, modifiedAtMin?: string) {
   const url = buildSapoPrivateAppUrl('/admin/orders.json');
-  const params = {
+  const params: Record<string, any> = {
     limit,
     page,
     fields: 'id,name,order_number,created_on,updated_on,total_price,financial_status,fulfillment_status,tags,shipping_address,billing_address,line_items,note',
   };
+
+  if (modifiedAtMin) {
+    params.modified_at_min = modifiedAtMin;
+  }
 
   logDivider(`FETCH SAPO PAGE ${page}`);
   logJson('SAPO request', {
@@ -485,10 +490,28 @@ async function getOrCreateClient(cred: IntegrationCredential) {
   });
 
   if (!client) {
-    client = await strapi.documents('api::client.client').create({
-      data: { name: clientName, appId: clientAppId, isActive: true },
-      status: 'published',
+    client = await strapi.documents('api::client.client').findFirst({
+      filters: { appId: clientAppId },
     });
+  }
+
+  if (!client) {
+    try {
+      client = await strapi.documents('api::client.client').create({
+        data: { name: clientName, appId: clientAppId, isActive: true },
+        status: 'published',
+      });
+    } catch (createError: any) {
+      // Handle race condition or pre-existing record with same appId
+      if (createError?.message?.includes('unique') || createError?.details?.errors?.some?.((e: any) => e.path?.includes('appId'))) {
+        client = await strapi.documents('api::client.client').findFirst({
+          filters: { appId: clientAppId },
+        });
+        if (!client) throw createError;
+      } else {
+        throw createError;
+      }
+    }
   }
 
   return client;
@@ -583,7 +606,10 @@ async function upsertSapoOrder(order: any, clientName: string) {
 
 function normalizePhone(rawPhone: string) {
   const digits = (rawPhone || '').replace(/\D+/g, '');
-  const trimmed = digits.replace(/^0+/, '');
+  // Xóa prefix quốc tế: +84 hoặc 84 ở đầu → về dạng 9xxxxxxxx
+  const withoutCountry = digits.replace(/^(84|0084)/, '');
+  // Nếu còn bắt đầu bằng 0 thì xóa 0
+  const trimmed = withoutCountry.replace(/^0+/, '');
   return trimmed || '868036856';
 }
 
@@ -619,7 +645,8 @@ function buildSmartMindsPayload(localOrder: SapoOrderRecord) {
   const sapo = localOrder.payload || {};
   const shippingAddress = sapo.shipping_address || sapo.billing_address || {};
   const lineItems = Array.isArray(sapo.line_items) ? sapo.line_items : [];
-  const clientOrderId = String(sapo.name || sapo.order_number || sapo.id || localOrder.orderId);
+  // Dùng SAPO order.id làm client_order_id — key duy nhất để đối soát callback từ SmartMinds
+  const clientOrderId = String(sapo.id || localOrder.orderId);
   const merchantOrderId = String(sapo.order_number || sapo.id || localOrder.orderId).slice(-6);
   const createdAt = new Date(sapo.created_on || sapo.created_at || new Date().toISOString());
   const orderTime = Math.floor(createdAt.getTime() / 1000);
@@ -852,10 +879,9 @@ async function syncSapoOrdersForCredential(cred: IntegrationCredential) {
   await getOrCreateClient(cred);
 
   const fetchWatermark = buildWatermarkFromCredential(cred);
+  const modifiedAtMin = fetchWatermark.modifiedAt ? formatSapoDate(fetchWatermark.modifiedAt) : null;
   console.log(
-    `[SAPO] Compare mode: latest ${SAPO_MAX_PAGES_PER_RUN} page(s), local watermark=${formatSapoDate(
-      fetchWatermark.modifiedAt || getStartOfUtc7Day(now)
-    )}, lastOrderId=${fetchWatermark.orderId || 'none'}`
+    `[SAPO] Fetch filter: modified_at_min=${modifiedAtMin || 'none (start of day)'}, lastOrderId=${fetchWatermark.orderId || 'none'}`
   );
 
   let page = 1;
@@ -874,9 +900,10 @@ async function syncSapoOrdersForCredential(cred: IntegrationCredential) {
       break;
     }
 
-    const pageOrders = await fetchSapoOrdersPage(page, SAPO_PAGE_LIMIT);
+    const pageOrders = await fetchSapoOrdersPage(page, SAPO_PAGE_LIMIT, modifiedAtMin || undefined);
     if (!pageOrders.length) break;
 
+    // Sort tăng dần theo timestamp → orderId để xử lý đúng thứ tự
     const incrementalOrders = [...pageOrders].sort((a: any, b: any) => {
       const aDate = parseSapoOrderTimestamp(a)?.getTime() || 0;
       const bDate = parseSapoOrderTimestamp(b)?.getTime() || 0;
@@ -884,16 +911,20 @@ async function syncSapoOrdersForCredential(cred: IntegrationCredential) {
       return String(a.id || '').localeCompare(String(b.id || ''));
     });
 
+    // Lọc bỏ các order đã nằm dưới watermark (overlap 2 phút có thể trả về order cũ)
+    const newOrders = incrementalOrders.filter((order: any) => compareWatermark(order, fetchWatermark));
+
     fetchedCount += pageOrders.length;
     logJson('Compare SAPO orders', {
       clientName: CURRENT_CLIENT_NAME,
       page,
-      fetchedPageCount: pageOrders.length,
-      compareCount: incrementalOrders.length,
-      compareSample: incrementalOrders.slice(0, 5).map((order: any) => summarizeOrder(order)),
+      fetchedFromSapo: pageOrders.length,
+      afterWatermarkFilter: newOrders.length,
+      skipped: pageOrders.length - newOrders.length,
+      sample: newOrders.slice(0, 3).map((order: any) => summarizeOrder(order)),
     });
 
-    for (const order of incrementalOrders) {
+    for (const order of newOrders) {
       const localOrder = await upsertSapoOrder(order, CURRENT_CLIENT_NAME);
       if (localOrder) {
         upsertedCount++;

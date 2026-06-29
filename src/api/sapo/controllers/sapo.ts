@@ -251,6 +251,60 @@ export default {
     }
   },
 
+  // SmartMinds callback: cập nhật trạng thái giao hàng
+  // Body: { client_order_id: "219994092", status: "...", zeek_order_id: "..." }
+  async handleSmCallback(ctx) {
+    const body = ctx.request.body || {};
+    const clientOrderId = String(body.client_order_id || body.clientOrderId || '');
+    const status = String(body.status || body.delivery_status || '');
+    const zeekOrderId = String(body.zeek_order_id || body.order_id || body.zeekOrderId || '');
+
+    console.log(`\n📬 [SM CALLBACK] client_order_id=${clientOrderId} status=${status} zeek_order_id=${zeekOrderId}`);
+
+    if (!clientOrderId) {
+      ctx.status = 400;
+      ctx.body = { error: 'Missing client_order_id' };
+      return;
+    }
+
+    try {
+      // client_order_id = SAPO order.id = orderId trong sapo-order collection
+      const sapoOrder = await strapi.db.query('api::sapo-order.sapo-order').findOne({
+        where: { orderId: clientOrderId },
+      });
+
+      if (!sapoOrder) {
+        console.warn(`[SM CALLBACK] sapo-order not found for orderId=${clientOrderId}`);
+        ctx.status = 404;
+        ctx.body = { error: `Order not found: ${clientOrderId}` };
+        return;
+      }
+
+      const currentLog = Array.isArray(sapoOrder.processingLog) ? sapoOrder.processingLog : [];
+      currentLog.push({
+        timestamp: new Date().toISOString(),
+        step: 'SM_CALLBACK',
+        message: `SmartMinds callback: status=${status}, zeek_order_id=${zeekOrderId}`,
+      });
+
+      await strapi.db.query('api::sapo-order.sapo-order').update({
+        where: { id: sapoOrder.id },
+        data: {
+          zeekStatus: status,
+          processingLog: currentLog.slice(-100),
+        },
+      });
+
+      console.log(`✅ [SM CALLBACK] Updated orderId=${clientOrderId} zeekStatus=${status}`);
+      ctx.status = 200;
+      ctx.body = { ok: true };
+    } catch (error: any) {
+      console.error(`🔥 [SM CALLBACK] Error:`, error);
+      ctx.status = 500;
+      ctx.body = { error: error.message };
+    }
+  },
+
   // Debug function - kiểm tra sapo-order data
   async debugOrders(ctx) {
     if (process.env.NODE_ENV === 'production') {

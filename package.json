@@ -12,11 +12,12 @@
     "start": "strapi start",
     "strapi": "strapi",
     "upgrade": "npx @strapi/upgrade latest",
-    "upgrade:dry": "npx @strapi/upgrade latest --dry"
+    "upgrade:dry": "npx @strapi/upgrade latest --dry",
+    "sapo:sample": "npx ts-node --skip-project src/scripts/fetch-sapo-sample.ts"
   },
   "dependencies": {
-    "@strapi/plugin-users-permissions": "^5.40.0",
-    "@strapi/strapi": "^5.40.0",
+    "@strapi/plugin-users-permissions": "^5.48.1",
+    "@strapi/strapi": "^5.48.1",
     "axios": "^1.14.0",
     "better-sqlite3": "12.6.2",
     "pg": "^8.20.0",
@@ -32,7 +33,7 @@
     "typescript": "^5"
   },
   "engines": {
-    "node": ">=18.0.0 <=22.x.x",
+    "node": ">=18.0.0 <=24.x.x",
     "npm": ">=6.0.0"
   },
   "strapi": {
