@@ -657,6 +657,9 @@ function buildSmartMindsPayload(localOrder: SapoOrderRecord) {
   const codType = financialStatus === 'paid' ? 2 : 1;
   const totalPrice = Number(sapo.total_price || 0) || 0;
 
+  const expectedDeliveryRaw = sapo.expected_delivery_date || sapo.shipment_deadline || null;
+  const appointTime = expectedDeliveryRaw ? Math.floor(new Date(expectedDeliveryRaw).getTime() / 1000) : null;
+
   return {
     auth: {
       appid: Number(ZEEK_APP_ID),
@@ -674,7 +677,8 @@ function buildSmartMindsPayload(localOrder: SapoOrderRecord) {
       client_order_id: clientOrderId,
       merchant_order_id: merchantOrderId,
       order_time: orderTime,
-      is_appoint: 0,
+      is_appoint: appointTime ? 2 : 0,
+      appoint_time: appointTime,
       remark: sapo.note || '',
       merchant_remark: '',
       cod_type: codType,
